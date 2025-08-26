@@ -1,15 +1,4 @@
 import initWasm from "../../backend/target/wasm64-unknown-unknown/release/cairo_prove_wasm.wasm?init";
-// A small message protocol between main <-> worker:
-// main -> worker:
-//   { type: 'init' }
-//   { type: 'run' }
-//   { type: 'call', id, fn, args[] }
-// worker -> main:
-//   { type: 'ready' }
-//   { type: 'log', message }
-//   { type: 'result', id, result }
-//   { type: 'error', message, id? }
-//   { type: 'ran' }
 
 function toNumber(x: number | bigint): number {
   if (typeof x === "bigint") {
@@ -70,19 +59,9 @@ self.addEventListener("message", async (ev: MessageEvent) => {
 
         postMessage({ type: "ready" });
         break;
-      // case "run":
-      //   if (!instance || !instance.exports) throw new Error("not initialized");
-      //   if (typeof instance.exports.run === "function") {
-      //     instance.exports.run();
-      //     postMessage({ type: "ran" });
-      //   } else {
-      //     postMessage({ type: "error", message: "no run() export found" });
-      //   }
-      //   break;
       case "call":
-        if (!instance || !instance.exports) throw new Error("not initialized");
-
         const { id, fn, args } = data;
+        if (!instance || !instance.exports) throw new Error("not initialized");
         if (typeof instance.exports[fn] !== "function")
           throw new Error(`export ${fn} not found`);
 

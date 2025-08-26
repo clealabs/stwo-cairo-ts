@@ -16,9 +16,6 @@ const handle = createWasmWorkerHandle({
   try {
     await handle.init();
     append("wasm worker ready");
-    // await handle.run();
-    // append("run() completed");
-    // call an exported function (example)
     const res = await handle.call("run");
     append("call result: " + String(res));
   } catch (e) {
