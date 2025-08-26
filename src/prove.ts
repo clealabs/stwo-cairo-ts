@@ -1,3 +1,5 @@
+// import initWasm from "../backend/target/wasm64-unknown-unknown/release/cairo_prove_wasm.wasm?init";
+
 /**
  * Executes a Cairo program and produces a proof of execution.
  * @param executable_json A JSON Cairo executable
