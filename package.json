@@ -1,0 +1,25 @@
+{
+  "name": "stwo-cairo",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/stwo-cairo.umd.cjs",
+  "module": "./dist/stwo-cairo.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/stwo-cairo.js",
+      "require": "./dist/stwo-cairo.umd.cjs"
+    }
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.1.2",
+    "vite-plugin-dts": "^4.5.4"
+  }
+}
