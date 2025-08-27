@@ -25,6 +25,7 @@ export function createWasmWorkerHandle(options?: {
 
   const pendingCalls = new Map<number, CallResolver>();
   let callId = 1;
+  let lastResult: string | undefined; // TODO: would be nicer to map call IDs to results
 
   const onLog = options?.onLog ?? (() => {});
   const onError = options?.onError ?? (() => {});
@@ -38,11 +39,14 @@ export function createWasmWorkerHandle(options?: {
       case "log":
         onLog(String(data.message ?? ""));
         break;
-      case "result": {
+      case "result":
+        lastResult = String(data.message ?? "");
+        break;
+      case "returned": {
         const id: number = data.id;
         const resolver = pendingCalls.get(id);
         if (resolver) {
-          resolver.resolve(data.result);
+          resolver.resolve(lastResult);
           pendingCalls.delete(id);
         }
         break;
@@ -88,10 +92,8 @@ export function createWasmWorkerHandle(options?: {
   }
 
   function terminate() {
-    // reject any pending calls
-    for (const [_id, resolver] of pendingCalls.entries()) {
+    for (const [_id, resolver] of pendingCalls.entries())
       resolver.reject(new Error("worker terminated"));
-    }
     pendingCalls.clear();
     worker.terminate();
   }

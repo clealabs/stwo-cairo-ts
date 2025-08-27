@@ -1,53 +1,42 @@
-// Guest: imports a host function `host_print(ptr: u64, len: u64)` from module "host"
-// and exports `run` which calls it with a pointer/length into the guest linear memory.
 use getrandom::Error;
 use std::panic;
 
 use cairo_air::{CairoProof, PreProcessedTraceVariant, verifier::verify_cairo};
 use cairo_lang_runner::Arg;
 use cairo_prove::{
-    execute::execute,
+    execute::execute as cairo_execute,
     prove::{prove as cairo_prove, prover_input_from_runner},
 };
 use cairo_vm::Felt252;
 use stwo_cairo_adapter::ProverInput;
-use stwo_cairo_prover::{
-    prover::prove_cairo,
-    stwo_prover::core::{
-        fri::FriConfig,
-        pcs::PcsConfig,
-        prover::ProvingError,
-        vcs::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher},
-    },
+use stwo_cairo_prover::stwo_prover::core::{
+    fri::FriConfig,
+    pcs::PcsConfig,
+    vcs::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher},
 };
 
+// Wasm imports
+
 #[link(wasm_import_module = "host")]
 unsafe extern "C" {
-    fn host_print(ptr: u64, len: u64);
-}
-
-/// https://github.com/rustwasm/console_error_panic_hook/blob/master/src/lib.rs
-pub fn hook(info: &panic::PanicHookInfo) {
-    let msg = info.to_string();
-    let ptr = msg.as_ptr() as u64;
-    let len = msg.len() as u64;
-    unsafe {
-        host_print(ptr, len);
-    }
+    pub(crate) fn host_print(ptr: u64, len: u64);
 }
 
 #[link(wasm_import_module = "host")]
 unsafe extern "C" {
-    fn crypto_get_random(ptr: u64, len: u64);
+    pub(crate) fn return_string(ptr: u64, len: u64);
 }
 
-// https://docs.rs/getrandom/0.3.3/getrandom/#custom-backend
+#[link(wasm_import_module = "host")]
+unsafe extern "C" {
+    pub(crate) fn crypto_get_random(ptr: u64, len: u64);
+}
+
+/// https://docs.rs/getrandom/0.3.3/getrandom/#custom-backend
 #[unsafe(no_mangle)]
 unsafe extern "Rust" fn __getrandom_v03_custom(dest: *mut u8, len: usize) -> Result<(), Error> {
     let buf = unsafe {
-        // fill the buffer with zeros
         core::ptr::write_bytes(dest, 0, len);
-        // create mutable byte slice
         core::slice::from_raw_parts_mut(dest, len)
     };
     unsafe {
@@ -56,7 +45,26 @@ unsafe extern "Rust" fn __getrandom_v03_custom(dest: *mut u8, len: usize) -> Res
     Ok(())
 }
 
-pub fn secure_pcs_config() -> PcsConfig {
+/// https://github.com/rustwasm/console_error_panic_hook/blob/master/src/lib.rs
+fn hook(info: &panic::PanicHookInfo) {
+    let msg = info.to_string();
+    let ptr = msg.as_ptr() as u64;
+    let len = msg.len() as u64;
+    unsafe {
+        host_print(ptr, len);
+    }
+}
+
+#[inline]
+fn panic_hook_set_once() {
+    use std::sync::Once;
+    static SET_HOOK: Once = Once::new();
+    SET_HOOK.call_once(|| {
+        panic::set_hook(Box::new(hook));
+    });
+}
+
+fn secure_pcs_config() -> PcsConfig {
     PcsConfig {
         pow_bits: 26,
         fri_config: FriConfig {
@@ -67,34 +75,17 @@ pub fn secure_pcs_config() -> PcsConfig {
     }
 }
 
-pub fn execute_and_prove(
-    executable_json: &str,
-    args: Vec<Arg>,
-    pcs_config: PcsConfig,
-) -> CairoProof<Blake2sMerkleHasher> {
-    // Execute.
+fn _execute(executable_json: &str, args: Vec<Arg>) -> ProverInput {
     let executable = serde_json::from_str(executable_json).expect("Failed to read executable");
-    let runner = execute(executable, args);
-    // Prove.
-    let prover_input = prover_input_from_runner(&runner);
-    cairo_prove(prover_input, pcs_config)
-}
-
-pub fn trace_gen(executable_json: &str, args: Vec<Arg>) -> ProverInput {
-    let executable = serde_json::from_str(executable_json).expect("Failed to read executable");
-    let runner = execute(executable, args);
+    let runner = cairo_execute(executable, args);
     prover_input_from_runner(&runner)
 }
 
-pub fn prove(prover_input: ProverInput) -> Result<CairoProof<Blake2sMerkleHasher>, ProvingError> {
-    prove_cairo::<Blake2sMerkleChannel>(
-        prover_input,
-        PcsConfig::default(),
-        PreProcessedTraceVariant::CanonicalWithoutPedersen,
-    )
+fn _prove(prover_input: ProverInput) -> CairoProof<Blake2sMerkleHasher> {
+    cairo_prove(prover_input, secure_pcs_config())
 }
 
-pub fn verify(cairo_proof: CairoProof<Blake2sMerkleHasher>, with_pedersen: bool) -> bool {
+fn _verify(cairo_proof: CairoProof<Blake2sMerkleHasher>, with_pedersen: bool) -> bool {
     let preprocessed_trace = match with_pedersen {
         true => PreProcessedTraceVariant::Canonical,
         false => PreProcessedTraceVariant::CanonicalWithoutPedersen,
@@ -103,51 +94,36 @@ pub fn verify(cairo_proof: CairoProof<Blake2sMerkleHasher>, with_pedersen: bool)
         .is_ok()
 }
 
+fn _contains_pedersen(prover_input: &ProverInput) -> bool {
+    prover_input.public_segment_context[1]
+}
+
 pub fn test_e2e() {
     let executable_json = include_str!("example_executable.json");
     let args = vec![Arg::Value(Felt252::from(100))];
-    let pcs_config = PcsConfig::default();
 
-    let msg1 = "Running trace_gen...";
+    let msg1 = "Running execute...";
     unsafe {
         host_print(msg1.as_ptr() as u64, msg1.len() as u64);
     }
-    let prover_input = trace_gen(executable_json, args);
+
+    let prover_input = _execute(executable_json, args);
+    let with_pedersen = _contains_pedersen(&prover_input);
+
     let msg2 = "Running prove...";
     unsafe {
         host_print(msg2.as_ptr() as u64, msg2.len() as u64);
     }
-    let cairo_proof = prove(prover_input).expect("Failed to prove");
-    let preprocessed_trace = PreProcessedTraceVariant::CanonicalWithoutPedersen;
+
+    let cairo_proof = _prove(prover_input);
+
     let msg3 = "Running verify...";
     unsafe {
         host_print(msg3.as_ptr() as u64, msg3.len() as u64);
     }
-    let result = verify_cairo::<Blake2sMerkleChannel>(cairo_proof, pcs_config, preprocessed_trace);
-    assert!(result.is_ok());
-}
 
-pub fn prove_example() {
-    let prover_input_json = include_str!("example_prover_input.json");
-    let prover_input: ProverInput =
-        serde_json::from_str(prover_input_json).expect("Failed to read prover input");
-    let msg = "Running prove...";
-    unsafe {
-        host_print(msg.as_ptr() as u64, msg.len() as u64);
-    }
-    let cairo_proof = prove(prover_input);
-    assert!(cairo_proof.is_ok());
-}
-
-pub fn verify_is_prime_7() {
-    let proof_json = include_str!("is_prime_proof_7.json");
-    let cairo_proof = serde_json::from_str(proof_json).expect("Failed to read cairo proof");
-    let msg = "Running verify...";
-    unsafe {
-        host_print(msg.as_ptr() as u64, msg.len() as u64);
-    }
-    let verdict = verify(cairo_proof, false);
-    assert!(verdict, "cairo proof verification failed");
+    let result = _verify(cairo_proof, with_pedersen);
+    assert!(result, "cairo proof verification failed");
 }
 
 pub fn test_crypto_get_random() {
@@ -162,26 +138,88 @@ pub fn test_crypto_get_random() {
     }
 }
 
+// Wasm exports
+// CONVENTION: All exports must not return values directly, but use `return_string` instead.
+// Any returned value will be ignored.
+
+/// Executes a compiled Cairo program.
+///
+/// SAFETY: host must ensure that (exe_ptr, exe_len) is a valid UTF-8 region in linear memory,
+/// and that (args_ptr, args_len) references a contiguous array of u64 values.
 #[unsafe(no_mangle)]
-pub extern "C" fn run() {
-    panic::set_hook(Box::new(hook));
+pub extern "C" fn execute(exe_ptr: u64, exe_len: u64, args_ptr: u64, args_len: u64) {
+    panic_hook_set_once();
 
-    let s = "hello, wasm64-unknown-unknown!";
-    let ptr = s.as_ptr() as u64;
-    let len = s.len() as u64;
+    let executable_json: &str = unsafe {
+        let bytes = core::slice::from_raw_parts(exe_ptr as *const u8, exe_len as usize);
+        core::str::from_utf8(bytes).expect("executable_json not valid UTF-8")
+    };
 
-    unsafe {
-        host_print(ptr, len);
-        // panic!("boom");
-    }
+    let arg_words: &[u64] =
+        unsafe { core::slice::from_raw_parts(args_ptr as *const u64, args_len as usize) };
+    let args: Vec<Arg> = arg_words
+        .iter()
+        .map(|&x| Arg::Value(Felt252::from(x)))
+        .collect();
+
+    let prover_input = _execute(executable_json, args);
+    let json = serde_json::to_string(&prover_input).expect("serialize prover_input");
+
+    unsafe { return_string(json.as_ptr() as u64, json.len() as u64) }
+}
+
+/// Produce a Cairo proof from a provided ProverInput JSON.
+///
+/// SAFETY: host must ensure (prover_input_ptr, prover_input_len) is valid UTF-8 JSON
+/// representing `ProverInput`.
+#[unsafe(no_mangle)]
+pub extern "C" fn prove(prover_input_ptr: u64, prover_input_len: u64) {
+    panic_hook_set_once();
+    let prover_input_json: &str = unsafe {
+        let bytes =
+            core::slice::from_raw_parts(prover_input_ptr as *const u8, prover_input_len as usize);
+        core::str::from_utf8(bytes).expect("prover_input json not valid UTF-8")
+    };
+    let prover_input: ProverInput =
+        serde_json::from_str(prover_input_json).expect("deserialize prover_input");
+    let proof = _prove(prover_input);
+    let json = serde_json::to_string(&proof).expect("serialize proof");
+    unsafe { return_string(json.as_ptr() as u64, json.len() as u64) }
+}
+
+/// Verify a Cairo proof. Returns `{"ok": true}` if the proof is valid.
+///
+/// SAFETY: host must ensure (proof_ptr, proof_len) is valid UTF-8 JSON representing
+/// `CairoProof<Blake2sMerkleHasher>`.
+#[unsafe(no_mangle)]
+pub extern "C" fn verify(proof_ptr: u64, proof_len: u64, with_pedersen: u64) {
+    panic_hook_set_once();
+    let proof_json: &str = unsafe {
+        let bytes = core::slice::from_raw_parts(proof_ptr as *const u8, proof_len as usize);
+        core::str::from_utf8(bytes).expect("proof json not valid UTF-8")
+    };
+    let proof: CairoProof<Blake2sMerkleHasher> =
+        serde_json::from_str(proof_json).expect("deserialize proof");
+    let ok = _verify(proof, with_pedersen != 0);
+
+    let msg = if ok {
+        "{\"ok\": true}"
+    } else {
+        "{\"ok\": false}"
+    };
+    unsafe { return_string(msg.as_ptr() as u64, msg.len() as u64) }
+}
+
+/// Run tests
+#[unsafe(no_mangle)]
+pub extern "C" fn test() {
+    panic_hook_set_once();
 
     test_e2e();
-    // prove_example();
-    // verify_is_prime_7();
     test_crypto_get_random();
 
     let msg = "Success!";
     unsafe {
-        host_print(msg.as_ptr() as u64, msg.len() as u64);
+        return_string(msg.as_ptr() as u64, msg.len() as u64);
     }
 }

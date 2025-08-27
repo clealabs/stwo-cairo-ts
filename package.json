@@ -14,7 +14,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:wasm": "cd backend && cargo build -Z build-std=std,panic_abort --target wasm64-unknown-unknown --release"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
