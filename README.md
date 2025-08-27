@@ -18,8 +18,9 @@ import { execute, prove } from "stwo-cairo";
 const executable: string = "..."; // Cairo executable JSON string
 const args: BigInt[] = [1n, 2n]; // arguments for the program
 
-const prover_input: string = await execute(executable, args);
-const proof: string = await prove(prover_input);
+const prover_input: string = await execute(executable, args); // the execution traces
+const with_pedersen: boolean = await with_pedersen(prover_input); // whether the prover uses the perdersen builtin
+const proof: string = await prove(prover_input); // the generated Cairo proof
 ```
 
 Verifying a proof:
@@ -27,7 +28,7 @@ Verifying a proof:
 ```ts
 import { verify } from "stwo-cairo";
 
-const verdict: boolean = await verify(proof);
+const verdict: boolean = await verify(proof, with_pedersen); // whether the proof is valid
 ```
 
 ## Development
