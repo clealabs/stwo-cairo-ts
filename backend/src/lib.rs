@@ -8,6 +8,7 @@ use cairo_prove::{
     prove::{prove as cairo_prove, prover_input_from_runner},
 };
 use cairo_vm::Felt252;
+use serde::Serialize;
 use stwo_cairo_adapter::ProverInput;
 use stwo_cairo_prover::stwo_prover::core::{
     fri::FriConfig,
@@ -108,14 +109,18 @@ pub fn test_e2e() {
     }
 
     let prover_input = _execute(executable_json, args);
-    let with_pedersen = _contains_pedersen(&prover_input);
+    let prover_input_json = serde_json::to_string(&prover_input).expect("serialize prover_input");
+    let prover_input2: ProverInput =
+        serde_json::from_str(&prover_input_json).expect("deserialize prover_input");
+
+    let with_pedersen = _contains_pedersen(&prover_input2);
 
     let msg2 = "Running prove...";
     unsafe {
         host_print(msg2.as_ptr() as u64, msg2.len() as u64);
     }
 
-    let cairo_proof = _prove(prover_input);
+    let cairo_proof = _prove(prover_input2);
 
     let msg3 = "Running verify...";
     unsafe {
@@ -138,9 +143,22 @@ pub fn test_crypto_get_random() {
     }
 }
 
+/// Wrapper around `return_string` with JSON serialization.
+fn return_json<T: Serialize>(value: &T) {
+    let json = serde_json::to_string(value).expect("serialize json");
+    // let boxed: Box<str> = json.into_boxed_str();
+    // let ptr = boxed.as_ptr();
+    // let len = boxed.len();
+    // core::mem::forget(boxed); // leak
+    // unsafe { return_string(ptr as u64, len as u64) };
+    unsafe { return_string(json.as_ptr() as u64, json.len() as u64) };
+}
+
 // Wasm exports
 // CONVENTION: All exports must not return values directly, but use `return_string` instead.
-// Any returned value will be ignored.
+// Any returned value will be ignored by the host.
+
+// static mut PROVER_INPUT_JSON: &str = "";
 
 /// Executes a compiled Cairo program.
 ///
@@ -163,9 +181,12 @@ pub extern "C" fn execute(exe_ptr: u64, exe_len: u64, args_ptr: u64, args_len: u
         .collect();
 
     let prover_input = _execute(executable_json, args);
-    let json = serde_json::to_string(&prover_input).expect("serialize prover_input");
-
-    unsafe { return_string(json.as_ptr() as u64, json.len() as u64) }
+    // // Leak the JSON string to obtain a 'static str for later use (acceptable for long-lived WASM instance).
+    // let json_owned = serde_json::to_string(&prover_input).expect("serialize prover_input");
+    // unsafe {
+    //     PROVER_INPUT_JSON = Box::leak(json_owned.into_boxed_str());
+    // }
+    return_json(&prover_input);
 }
 
 /// Produce a Cairo proof from a provided ProverInput JSON.
@@ -180,11 +201,63 @@ pub extern "C" fn prove(prover_input_ptr: u64, prover_input_len: u64) {
             core::slice::from_raw_parts(prover_input_ptr as *const u8, prover_input_len as usize);
         core::str::from_utf8(bytes).expect("prover_input json not valid UTF-8")
     };
+
+    // unsafe {
+    //     host_print(
+    //         prover_input_json.as_ptr() as u64,
+    //         prover_input_json.len() as u64,
+    //     );
+    // }
+    // let prover_input_json_ref: &str = include_str!("prover_input.json");
+
+    // compare the JSON strings
+    // assert_eq!(
+    //     prover_input_json, prover_input_json_ref,
+    //     "Prover input JSON does not match"
+    // );
+
+    // unsafe {
+    //     // host_print(
+    //     //     PROVER_INPUT_JSON.as_ptr() as u64,
+    //     //     PROVER_INPUT_JSON.len() as u64,
+    //     // );
+    //     let msg = "Prover input JSON: ";
+    //     host_print(msg.as_ptr() as u64, msg.len() as u64);
+    //     host_print(
+    //         prover_input_json.as_ptr() as u64,
+    //         prover_input_json.len() as u64,
+    //     );
+    //     // let prover_input: ProverInput =
+    //     //     serde_json::from_str(PROVER_INPUT_JSON).expect("deserialize prover_input");
+    //     let prover_input: ProverInput = serde_json::from_str(include_str!("prover_input.json"))
+    //         .expect("deserialize prover_input");
+    //     let proof = _prove(prover_input);
+    //     return_json(&proof);
+    // }
+
+    // unsafe {
+    //     host_print(
+    //         prover_input_json.as_ptr() as u64,
+    //         prover_input_json.len() as u64,
+    //     );
+    // }
+
+    // clone into String object
+    unsafe {
+        let msg = "Cloning str...";
+        host_print(msg.as_ptr() as u64, msg.len() as u64);
+    }
+    let prover_input_json_string = prover_input_json.to_string();
+    unsafe {
+        host_print(
+            prover_input_json_string.as_ptr() as u64,
+            prover_input_json_string.len() as u64,
+        );
+    }
     let prover_input: ProverInput =
-        serde_json::from_str(prover_input_json).expect("deserialize prover_input");
+        serde_json::from_str(&prover_input_json_string).expect("deserialize prover_input");
     let proof = _prove(prover_input);
-    let json = serde_json::to_string(&proof).expect("serialize proof");
-    unsafe { return_string(json.as_ptr() as u64, json.len() as u64) }
+    return_json(&proof);
 }
 
 /// Verify a Cairo proof. Returns `{"ok": true}` if the proof is valid.
@@ -202,12 +275,12 @@ pub extern "C" fn verify(proof_ptr: u64, proof_len: u64, with_pedersen: u64) {
         serde_json::from_str(proof_json).expect("deserialize proof");
     let ok = _verify(proof, with_pedersen != 0);
 
-    let msg = if ok {
-        "{\"ok\": true}"
-    } else {
-        "{\"ok\": false}"
-    };
-    unsafe { return_string(msg.as_ptr() as u64, msg.len() as u64) }
+    #[derive(Serialize)]
+    struct VerifyResult {
+        ok: bool,
+    }
+    let res = VerifyResult { ok };
+    return_json(&res);
 }
 
 /// Run tests

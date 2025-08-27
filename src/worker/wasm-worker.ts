@@ -5,13 +5,13 @@ let sharedMemory: WebAssembly.Memory | null = null;
 let heapOffset: bigint | null = null; // bump allocator offset (BigInt for wasm64)
 
 function toNumber(x: number | bigint): number {
-  if (typeof x === "bigint") {
-    const n = Number(x);
-    if (!Number.isSafeInteger(n))
-      throw new RangeError(`${x} too large to convert to JS Number safely`);
-    return n;
+  if (typeof x === "number") return x;
+  if (x > BigInt(Number.MAX_SAFE_INTEGER) || x < BigInt(0)) {
+    throw new RangeError(
+      `bigint ${x} cannot be represented safely as JS Number`
+    );
   }
-  return x;
+  return Number(x);
 }
 
 function initHeapOffset() {
@@ -35,31 +35,60 @@ function initHeapOffset() {
   }
 }
 
+// safer alloc: returns BigInt pointer
 function alloc(len: number, align: number = 8): bigint {
   if (len <= 0) return 0n;
   if (!sharedMemory) throw new Error("wasm memory not initialized");
   initHeapOffset();
   let off = heapOffset!;
   const mask = BigInt(align - 1);
-  if ((off & mask) !== 0n) {
-    off = (off + mask) & ~mask;
+  if ((off & mask) !== 0n) off = (off + mask) & ~mask;
+
+  // compute required end offset as BigInt
+  const end = off + BigInt(len);
+  console.log("alloc: off=", off, "mask=", mask, "end=", end);
+
+  // grow if needed
+  if (end > BigInt(sharedMemory.buffer.byteLength)) {
+    console.log("alloc: growing memory");
+    const pageSize: bigint = 64n * 1024n;
+    const additionalBytes = end - BigInt(sharedMemory.buffer.byteLength);
+    const pages: bigint = BigInt(
+      Math.ceil(Number((additionalBytes + pageSize - 1n) / pageSize))
+    );
+    console.log("alloc: growing memory", pages);
+    // grow accepts Number pages
+    (sharedMemory as any).grow(pages);
+    // after grow, sharedMemory.buffer is a new ArrayBuffer — that's fine,
+    // we always create new views after this check.
   }
-  const needed = Number(off + BigInt(len) - 0n);
-  if (needed > sharedMemory!.buffer.byteLength) {
-    // grow memory (64KiB pages)
-    const pageSize = 64 * 1024;
-    const current = sharedMemory!.buffer.byteLength;
-    const additional = needed - current;
-    const pages = Math.ceil(additional / pageSize);
-    (sharedMemory as any).grow(pages); // memory.grow returns old pages count
+
+  console.log("alloc: final", off, end);
+
+  // final sanity check (no unsafe Number conversion yet)
+  if (end > BigInt(sharedMemory.buffer.byteLength)) {
+    throw new Error(
+      `alloc: still out of bounds after grow: end=${end} buffer=${sharedMemory.buffer.byteLength}`
+    );
   }
-  heapOffset = off + BigInt(len);
+
+  heapOffset = end;
   return off;
 }
 
+// safer write: verifies bounds and uses safe conversion only when guaranteed safe
 function writeBytes(ptr: bigint, bytes: Uint8Array) {
   if (!sharedMemory) throw new Error("wasm memory not initialized");
-  new Uint8Array(sharedMemory!.buffer, Number(ptr), bytes.length).set(bytes);
+  const end = ptr + BigInt(bytes.length);
+  if (end > BigInt(sharedMemory.buffer.byteLength)) {
+    throw new RangeError(
+      `writeBytes out of bounds: ptr=${ptr} len=${bytes.length} buffer=${sharedMemory.buffer.byteLength}`
+    );
+  }
+  // Now it's safe to convert to Number (we asserted end <= byteLength, which is < 2^53 in practice)
+  const offset = toNumber(ptr);
+  // create new view at the moment of writing (never reuse old view across grows)
+  new Uint8Array(sharedMemory.buffer, offset, bytes.length).set(bytes);
 }
 
 // Convert JS argument into one or more wasm64 u64 values (as BigInt) suitable for FFI.
@@ -74,8 +103,11 @@ function convertArg(arg: any): bigint[] {
   if (typeof arg === "string") {
     const enc = new TextEncoder();
     const bytes = enc.encode(arg);
+    console.log("convertArg: string", bytes.length);
     const ptr = alloc(bytes.length, 1);
+    console.log("convertArg: string", bytes.length);
     writeBytes(ptr, bytes);
+    console.log("convertArg: string", ptr, bytes.length);
     return [ptr, BigInt(bytes.length)];
   }
   if (Array.isArray(arg)) {
@@ -107,7 +139,12 @@ const imports: WebAssembly.Imports = {
         if (!sharedMemory) throw new Error("wasm memory not initialized");
         const p = toNumber(ptr);
         const l = toNumber(len);
-        const bytes = new Uint8Array(sharedMemory.buffer, p, l);
+        if (p < 0 || l < 0 || p + l > sharedMemory.buffer.byteLength) {
+          throw new RangeError(
+            `host_print out of bounds: ptr=${ptr} len=${len}`
+          );
+        }
+        const bytes = new Uint8Array(sharedMemory.buffer, p, l).slice(); // slice makes a copy
         const s = new TextDecoder().decode(bytes);
 
         postMessage({ type: "log", message: s });
@@ -121,7 +158,12 @@ const imports: WebAssembly.Imports = {
         if (!sharedMemory) throw new Error("wasm memory not initialized");
         const p = toNumber(ptr);
         const l = toNumber(len);
-        const bytes = new Uint8Array(sharedMemory.buffer, p, l);
+        if (p < 0 || l < 0 || p + l > sharedMemory.buffer.byteLength) {
+          throw new RangeError(
+            `host_print out of bounds: ptr=${ptr} len=${len}`
+          );
+        }
+        const bytes = new Uint8Array(sharedMemory.buffer, p, l).slice(); // slice makes a copy
         const s = new TextDecoder().decode(bytes);
 
         postMessage({ type: "result", message: s });
@@ -162,7 +204,9 @@ self.addEventListener("message", async (ev: MessageEvent) => {
           throw new Error(`export ${fn} not found`);
 
         const marshalled: bigint[] = [];
+        console.log("Marshalled arguments:", marshalled, args);
         for (const a of args ?? []) marshalled.push(...convertArg(a));
+        console.log("Final marshalled arguments:", marshalled);
         const result = instance.exports[fn](...(marshalled as any));
         if (result) {
           console.warn(
