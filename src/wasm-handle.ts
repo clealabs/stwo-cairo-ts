@@ -1,6 +1,3 @@
-export * from "./prove";
-export * from "./verify";
-
 type CallResolver = {
   resolve: (v: any) => void;
   reject: (e: any) => void;

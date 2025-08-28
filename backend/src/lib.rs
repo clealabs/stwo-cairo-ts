@@ -187,32 +187,6 @@ fn return_json<T: Serialize>(call_id: u64, value: &T) {
     return_string(call_id, &json);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn execute_and_prove(
-    call_id: u64,
-    exe_ptr: u64,
-    exe_len: u64,
-    args_ptr: u64,
-    args_len: u64,
-) {
-    panic_hook_set_once();
-    let executable_json: &str = unsafe {
-        let bytes = core::slice::from_raw_parts(exe_ptr as *const u8, exe_len as usize);
-        core::str::from_utf8(bytes).expect("executable_json not valid UTF-8")
-    };
-
-    let arg_words: &[u64] =
-        unsafe { core::slice::from_raw_parts(args_ptr as *const u64, args_len as usize) };
-    let args: Vec<Arg> = arg_words
-        .iter()
-        .map(|&x| Arg::Value(Felt252::from(x)))
-        .collect();
-
-    let prover_input = _execute(executable_json, args);
-    let cairo_proof = _prove(prover_input);
-    return_json(call_id, &cairo_proof);
-}
-
 // Wasm exports
 // CONVENTION: All exports must not return values directly, but use `return_string` instead.
 // Any returned value will be ignored by the host.

@@ -35,58 +35,48 @@ async function callWrapper(
   return out;
 }
 
+/**
+ * Executes a Cairo program and produces a proof of execution.
+ * @param executable_json A JSON Cairo executable
+ * @param args The arguments to pass to the executable
+ * @returns A JSON-serialized CairoProof<Blake2sMerkleHasher>
+ */
 export async function execute(
   executable: string,
   ...args: bigint[]
 ): Promise<string> {
-  // if (!handle) await init();
-  // const resBuf = new SharedArrayBuffer(0, { maxByteLength: SAB_MAX_LENGTH });
-  // const resView = new Uint8Array(resBuf);
-  // const inputBytes = new TextEncoder().encode(executable);
-  // const inputBuf = new SharedArrayBuffer(inputBytes.byteLength);
-  // const inputView = new Uint8Array(inputBuf);
-  // inputView.set(inputBytes);
-  // await handle!.call("execute", resBuf, inputBuf, args);
-  // const copied = resView.slice();
-  // const proverInput = new TextDecoder().decode(copied);
-  // return proverInput;
   return await callWrapper("execute", executable, args);
 }
 
+/**
+ * Checks if the given prover input contains the Pedersen hash built-in. Used for deciding
+ * which preprocessed trace to use when verifying the proof.
+ * @param proverInput The prover input JSON string
+ * @returns whether the Pedersen hash built-in is present
+ */
 export function containsPedersenBuiltin(proverInput: string): boolean {
   const proverInputJson = JSON.parse(proverInput);
   return proverInputJson.public_segment_context.present[1];
 }
 
+/**
+ * Executes a Cairo program and produces a proof of execution.
+ * @param proverInput The prover input JSON string
+ * @returns A JSON-serialized CairoProof<Blake2sMerkleHasher>
+ */
 export async function prove(proverInput: string): Promise<string> {
-  // if (!handle) await init();
-  // const resBuf = new SharedArrayBuffer(0, { maxByteLength: SAB_MAX_LENGTH });
-  // const resView = new Uint8Array(resBuf);
-  // const inputBytes = new TextEncoder().encode(proverInput);
-  // const inputBuf = new SharedArrayBuffer(inputBytes.byteLength);
-  // const inputView = new Uint8Array(inputBuf);
-  // inputView.set(inputBytes);
-  // await handle!.call("prove", resBuf, inputBuf);
-  // const copied = resView.slice();
-  // const proof = new TextDecoder().decode(copied);
-  // return proof;
   return await callWrapper("prove", proverInput);
 }
 
+/**
+ * Verifies a Cairo proof.
+ * @param proof The proof JSON string (must use Blake2sMerkleHasher)
+ * @param withPedersen Whether to use the Pedersen hash built-in
+ * @returns Whether the proof is valid
+ */
 export async function verify(
   proof: string,
   withPedersen: boolean = false
 ): Promise<boolean> {
-  // if (!handle) await init();
-  // const resBuf = new SharedArrayBuffer(0, { maxByteLength: SAB_MAX_LENGTH });
-  // const resView = new Uint8Array(resBuf);
-  // const inputBytes = new TextEncoder().encode(proof);
-  // const inputBuf = new SharedArrayBuffer(inputBytes.byteLength);
-  // const inputView = new Uint8Array(inputBuf);
-  // inputView.set(inputBytes);
-  // await handle!.call("verify", resBuf, inputBuf, withPedersen);
-  // const copied = resView.slice();
-  // const verify_output = JSON.parse(new TextDecoder().decode(copied));
-  // return verify_output.ok;
   return JSON.parse(await callWrapper("verify", proof, withPedersen)).ok;
 }

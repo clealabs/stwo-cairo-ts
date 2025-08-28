@@ -2,6 +2,7 @@ import initWasm from "../../backend/target/wasm64-unknown-unknown/release/cairo_
 
 let instance: any = null;
 let sharedMemory: WebAssembly.Memory | null = null;
+let allocatedMemory: Map<number, [bigint, bigint]> = new Map(); // callId -> [ptr, size]
 let resBufs: Map<number, SharedArrayBuffer> = new Map();
 
 let malloc: (size: bigint) => bigint = () => {
@@ -42,7 +43,6 @@ function checkMemoryBounds(ptr: bigint, len: bigint) {
 }
 
 function writeBytes(ptr: bigint, bytes: Uint8Array) {
-  console.log("Writing bytes to WASM memory", bytes.length);
   checkMemoryBounds(ptr, BigInt(bytes.length));
   new Uint8Array(sharedMemory!.buffer, toNumber(ptr), bytes.length).set(bytes);
 }
@@ -53,14 +53,15 @@ function writeBytes(ptr: bigint, bytes: Uint8Array) {
 //  - string -> [ptr,len] (UTF-8)
 //  - Array<number|bigint> -> [ptr,len] of u64 values
 //  - Uint8Array -> [ptr,len] raw bytes
-function convertArg(arg: any): bigint[] {
+function convertArg(callId: number, arg: any): bigint[] {
   if (typeof arg === "number") return [BigInt(arg)];
   if (typeof arg === "bigint") return [arg];
   if (typeof arg === "boolean") return [arg ? BigInt(1) : BigInt(0)];
   if (typeof arg === "string") {
     const enc = new TextEncoder();
     const bytes = enc.encode(arg);
-    const ptr = malloc(BigInt(bytes.length)); // TODO: free this at some point
+    const ptr = malloc(BigInt(bytes.length));
+    allocatedMemory.set(callId, [ptr, BigInt(bytes.length)]);
     writeBytes(ptr, bytes);
     return [ptr, BigInt(bytes.length)];
   }
@@ -74,17 +75,20 @@ function convertArg(arg: any): bigint[] {
       // little-endian write of 64-bit value
       view.setBigUint64(i * 8, BigInt(v), true);
     }
-    const ptr = malloc(BigInt(bytes.length)); // TODO: free this at some point
+    const ptr = malloc(BigInt(bytes.length));
+    allocatedMemory.set(callId, [ptr, BigInt(bytes.length)]);
     writeBytes(ptr, bytes);
     return [ptr, BigInt(len)];
   }
   if (arg instanceof SharedArrayBuffer) {
-    const ptr = malloc(BigInt(arg.byteLength)); // TODO: free this at some point
+    const ptr = malloc(BigInt(arg.byteLength));
+    allocatedMemory.set(callId, [ptr, BigInt(arg.byteLength)]);
     writeBytes(ptr, new Uint8Array(arg));
     return [ptr, BigInt(arg.byteLength)];
   }
   if (arg instanceof Uint8Array) {
-    const ptr = malloc(BigInt(arg.length)); // TODO: free this at some point
+    const ptr = malloc(BigInt(arg.length));
+    allocatedMemory.set(callId, [ptr, BigInt(arg.length)]);
     writeBytes(ptr, arg);
     return [ptr, BigInt(arg.length)];
   }
@@ -205,6 +209,14 @@ const imports: WebAssembly.Imports = {
         const resView = new Uint8Array(resBuf);
         resView.set(bytes);
 
+        // free allocated memory for this call
+        const obj = allocatedMemory.get(toNumber(id));
+        if (obj) {
+          const [ptr, size] = obj;
+          free(ptr, size);
+          allocatedMemory.delete(toNumber(id));
+        }
+
         postMessage({ type: "result", id: toNumber(id) });
       } catch (err: any) {
         postMessage({ type: "error", message: String(err) });
@@ -247,7 +259,7 @@ self.addEventListener("message", async (ev: MessageEvent) => {
         resBufs.set(id, resBuf);
 
         const marshalled: bigint[] = [];
-        for (const a of args ?? []) marshalled.push(...convertArg(a));
+        for (const a of args ?? []) marshalled.push(...convertArg(id, a));
         const result = instance.exports[fn](BigInt(id), ...(marshalled as any));
 
         if (result) {
