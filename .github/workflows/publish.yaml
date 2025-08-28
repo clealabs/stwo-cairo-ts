@@ -17,7 +17,6 @@ jobs:
           version: 9
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
-        working-directory: backend
       - uses: actions/setup-node@v4
         with:
           node-version: "22.x"
