@@ -2,7 +2,14 @@ import initWasm from "../../backend/target/wasm64-unknown-unknown/release/cairo_
 
 let instance: any = null;
 let sharedMemory: WebAssembly.Memory | null = null;
-let heapOffset: bigint | null = null; // bump allocator offset (BigInt for wasm64)
+let resBufs: Map<number, SharedArrayBuffer> = new Map();
+
+let malloc: (size: bigint) => bigint = () => {
+  throw new Error("Memory allocator not initialized");
+};
+let free: (ptr: bigint, size: bigint) => void = () => {
+  throw new Error("Memory deallocator not initialized");
+};
 
 function toNumber(x: number | bigint): number {
   if (typeof x === "number") return x;
@@ -14,69 +21,6 @@ function toNumber(x: number | bigint): number {
   return Number(x);
 }
 
-function initHeapOffset() {
-  if (heapOffset !== null) return;
-  const baseExport = instance?.exports?.__heap_base;
-  if (typeof baseExport === "bigint") {
-    heapOffset = baseExport;
-  } else if (
-    typeof baseExport === "object" &&
-    baseExport !== null &&
-    "valueOf" in baseExport
-  ) {
-    try {
-      const v = (baseExport as any).valueOf();
-      heapOffset = typeof v === "bigint" ? v : BigInt(v);
-    } catch {
-      heapOffset = BigInt(sharedMemory!.buffer.byteLength);
-    }
-  } else {
-    heapOffset = BigInt(sharedMemory!.buffer.byteLength);
-  }
-}
-
-// safer alloc: returns BigInt pointer
-function alloc(len: number, align: number = 8): bigint {
-  if (len <= 0) return 0n;
-  if (!sharedMemory) throw new Error("wasm memory not initialized");
-  initHeapOffset();
-  let off = heapOffset!;
-  const mask = BigInt(align - 1);
-  if ((off & mask) !== 0n) off = (off + mask) & ~mask;
-
-  // compute required end offset as BigInt
-  const end = off + BigInt(len);
-  console.log("alloc: off=", off, "mask=", mask, "end=", end);
-
-  // grow if needed
-  if (end > BigInt(sharedMemory.buffer.byteLength)) {
-    console.log("alloc: growing memory");
-    const pageSize: bigint = 64n * 1024n;
-    const additionalBytes = end - BigInt(sharedMemory.buffer.byteLength);
-    const pages: bigint = BigInt(
-      Math.ceil(Number((additionalBytes + pageSize - 1n) / pageSize))
-    );
-    console.log("alloc: growing memory", pages);
-    // grow accepts Number pages
-    (sharedMemory as any).grow(pages);
-    // after grow, sharedMemory.buffer is a new ArrayBuffer — that's fine,
-    // we always create new views after this check.
-  }
-
-  console.log("alloc: final", off, end);
-
-  // final sanity check (no unsafe Number conversion yet)
-  if (end > BigInt(sharedMemory.buffer.byteLength)) {
-    throw new Error(
-      `alloc: still out of bounds after grow: end=${end} buffer=${sharedMemory.buffer.byteLength}`
-    );
-  }
-
-  heapOffset = end;
-  return off;
-}
-
-// safer write: verifies bounds and uses safe conversion only when guaranteed safe
 function writeBytes(ptr: bigint, bytes: Uint8Array) {
   if (!sharedMemory) throw new Error("wasm memory not initialized");
   const end = ptr + BigInt(bytes.length);
@@ -103,11 +47,8 @@ function convertArg(arg: any): bigint[] {
   if (typeof arg === "string") {
     const enc = new TextEncoder();
     const bytes = enc.encode(arg);
-    console.log("convertArg: string", bytes.length);
-    const ptr = alloc(bytes.length, 1);
-    console.log("convertArg: string", bytes.length);
+    const ptr = malloc(BigInt(bytes.length)); // TODO: free this at some point
     writeBytes(ptr, bytes);
-    console.log("convertArg: string", ptr, bytes.length);
     return [ptr, BigInt(bytes.length)];
   }
   if (Array.isArray(arg)) {
@@ -120,12 +61,12 @@ function convertArg(arg: any): bigint[] {
       // little-endian write of 64-bit value
       view.setBigUint64(i * 8, BigInt(v), true);
     }
-    const ptr = alloc(bytes.length, 8);
+    const ptr = malloc(BigInt(bytes.length)); // TODO: free this at some point
     writeBytes(ptr, bytes);
     return [ptr, BigInt(len)];
   }
   if (arg instanceof Uint8Array) {
-    const ptr = alloc(arg.length, 1);
+    const ptr = malloc(BigInt(arg.length)); // TODO: free this at some point
     writeBytes(ptr, arg);
     return [ptr, BigInt(arg.length)];
   }
@@ -144,7 +85,7 @@ const imports: WebAssembly.Imports = {
             `host_print out of bounds: ptr=${ptr} len=${len}`
           );
         }
-        const bytes = new Uint8Array(sharedMemory.buffer, p, l).slice(); // slice makes a copy
+        const bytes = new Uint8Array(sharedMemory.buffer, p, l);
         const s = new TextDecoder().decode(bytes);
 
         postMessage({ type: "log", message: s });
@@ -153,7 +94,7 @@ const imports: WebAssembly.Imports = {
       }
     },
 
-    return_string: (ptr: any, len: any) => {
+    return_string: (id: any, ptr: any, len: any) => {
       try {
         if (!sharedMemory) throw new Error("wasm memory not initialized");
         const p = toNumber(ptr);
@@ -163,10 +104,27 @@ const imports: WebAssembly.Imports = {
             `host_print out of bounds: ptr=${ptr} len=${len}`
           );
         }
-        const bytes = new Uint8Array(sharedMemory.buffer, p, l).slice(); // slice makes a copy
-        const s = new TextDecoder().decode(bytes);
 
-        postMessage({ type: "result", message: s });
+        const resBuf = resBufs.get(toNumber(id));
+        if (!resBuf) {
+          throw new Error(`no result buffer for id ${id}`);
+        }
+
+        const bytes = new Uint8Array(sharedMemory.buffer, p, l);
+        if (bytes.length > resBuf.byteLength) {
+          if (resBuf.growable && resBuf.maxByteLength >= bytes.length) {
+            resBuf.grow(bytes.length);
+          } else {
+            throw new RangeError(
+              `result buffer too small: ${resBuf.byteLength} < ${bytes.length}`
+            );
+          }
+        }
+
+        const resView = new Uint8Array(resBuf);
+        resView.set(bytes);
+
+        postMessage({ type: "result", id: toNumber(id) });
       } catch (err: any) {
         postMessage({ type: "error", message: String(err) });
       }
@@ -194,27 +152,29 @@ self.addEventListener("message", async (ev: MessageEvent) => {
       case "init":
         instance = await initWasm(imports);
         sharedMemory = (instance.exports && instance.exports.memory) ?? null;
+        malloc = instance.exports?.malloc ?? null;
+        free = instance.exports?.free ?? null;
 
         postMessage({ type: "ready" });
         break;
       case "call":
-        const { id, fn, args } = data;
+        const { id, fn, resBuf, args } = data;
         if (!instance || !instance.exports) throw new Error("not initialized");
         if (typeof instance.exports[fn] !== "function")
           throw new Error(`export ${fn} not found`);
 
+        resBufs.set(id, resBuf);
+
         const marshalled: bigint[] = [];
-        console.log("Marshalled arguments:", marshalled, args);
         for (const a of args ?? []) marshalled.push(...convertArg(a));
-        console.log("Final marshalled arguments:", marshalled);
-        const result = instance.exports[fn](...(marshalled as any));
+        const result = instance.exports[fn](BigInt(id), ...(marshalled as any));
+
         if (result) {
           console.warn(
             `Ignored returned a value: ${result} from Wasm call "${fn}". Use \`return_string\` instead.`
           );
         }
 
-        postMessage({ type: "returned", id });
         break;
       default:
         throw new Error(`unknown message type: ${data?.type}`);

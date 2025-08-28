@@ -1,4 +1,5 @@
 use getrandom::Error;
+use std::alloc::{Layout, alloc, dealloc};
 use std::panic;
 
 use cairo_air::{CairoProof, PreProcessedTraceVariant, verifier::verify_cairo};
@@ -25,7 +26,7 @@ unsafe extern "C" {
 
 #[link(wasm_import_module = "host")]
 unsafe extern "C" {
-    pub(crate) fn return_string(ptr: u64, len: u64);
+    pub(crate) fn return_string(call_id: u64, ptr: u64, len: u64);
 }
 
 #[link(wasm_import_module = "host")]
@@ -99,7 +100,8 @@ fn _contains_pedersen(prover_input: &ProverInput) -> bool {
     prover_input.public_segment_context[1]
 }
 
-pub fn test_e2e() {
+// TODO add #[cfg(test)] to exclude from release build
+fn test_e2e() {
     let executable_json = include_str!("example_executable.json");
     let args = vec![Arg::Value(Felt252::from(100))];
 
@@ -131,7 +133,8 @@ pub fn test_e2e() {
     assert!(result, "cairo proof verification failed");
 }
 
-pub fn test_crypto_get_random() {
+// TODO add #[cfg(test)] to exclude from release build
+fn test_crypto_get_random() {
     let buf = [0u8; 32];
     unsafe {
         crypto_get_random(buf.as_ptr() as u64, buf.len() as u64);
@@ -144,28 +147,77 @@ pub fn test_crypto_get_random() {
 }
 
 /// Wrapper around `return_string` with JSON serialization.
-fn return_json<T: Serialize>(value: &T) {
-    let json = serde_json::to_string(value).expect("serialize json");
-    // let boxed: Box<str> = json.into_boxed_str();
-    // let ptr = boxed.as_ptr();
-    // let len = boxed.len();
-    // core::mem::forget(boxed); // leak
-    // unsafe { return_string(ptr as u64, len as u64) };
-    unsafe { return_string(json.as_ptr() as u64, json.len() as u64) };
+fn return_json<T: Serialize>(call_id: u64, value: &T) {
+    unsafe {
+        let msg = "Serializing return value...";
+        host_print(msg.as_ptr() as u64, msg.len() as u64);
+    }
+    let json = sonic_rs::to_string(value).expect("serialize return value");
+    unsafe {
+        let msg = "Returning JSON string...";
+        host_print(msg.as_ptr() as u64, msg.len() as u64);
+    }
+    unsafe { return_string(call_id, json.as_ptr() as u64, json.len() as u64) };
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn execute_and_prove(
+    call_id: u64,
+    exe_ptr: u64,
+    exe_len: u64,
+    args_ptr: u64,
+    args_len: u64,
+) {
+    panic_hook_set_once();
+    // let executable_json = include_str!("example_executable.json");
+    // let args = vec![Arg::Value(Felt252::from(100))];
+
+    let executable_json: &str = unsafe {
+        let bytes = core::slice::from_raw_parts(exe_ptr as *const u8, exe_len as usize);
+        core::str::from_utf8(bytes).expect("executable_json not valid UTF-8")
+    };
+
+    let arg_words: &[u64] =
+        unsafe { core::slice::from_raw_parts(args_ptr as *const u64, args_len as usize) };
+    let args: Vec<Arg> = arg_words
+        .iter()
+        .map(|&x| Arg::Value(Felt252::from(x)))
+        .collect();
+
+    let msg1 = "Running execute...";
+    unsafe {
+        host_print(msg1.as_ptr() as u64, msg1.len() as u64);
+    }
+
+    let prover_input = _execute(executable_json, args);
+
+    // let with_pedersen = _contains_pedersen(&prover_input);
+
+    let msg2 = "Running prove...";
+    unsafe {
+        host_print(msg2.as_ptr() as u64, msg2.len() as u64);
+    }
+
+    let cairo_proof = _prove(prover_input);
+
+    let msg3 = "Returning string...";
+    unsafe {
+        host_print(msg3.as_ptr() as u64, msg3.len() as u64);
+    }
+
+    return_json(call_id, &cairo_proof);
 }
 
 // Wasm exports
 // CONVENTION: All exports must not return values directly, but use `return_string` instead.
 // Any returned value will be ignored by the host.
 
-// static mut PROVER_INPUT_JSON: &str = "";
-
 /// Executes a compiled Cairo program.
 ///
 /// SAFETY: host must ensure that (exe_ptr, exe_len) is a valid UTF-8 region in linear memory,
 /// and that (args_ptr, args_len) references a contiguous array of u64 values.
 #[unsafe(no_mangle)]
-pub extern "C" fn execute(exe_ptr: u64, exe_len: u64, args_ptr: u64, args_len: u64) {
+pub extern "C" fn execute(call_id: u64, exe_ptr: u64, exe_len: u64, args_ptr: u64, args_len: u64) {
     panic_hook_set_once();
 
     let executable_json: &str = unsafe {
@@ -181,12 +233,7 @@ pub extern "C" fn execute(exe_ptr: u64, exe_len: u64, args_ptr: u64, args_len: u
         .collect();
 
     let prover_input = _execute(executable_json, args);
-    // // Leak the JSON string to obtain a 'static str for later use (acceptable for long-lived WASM instance).
-    // let json_owned = serde_json::to_string(&prover_input).expect("serialize prover_input");
-    // unsafe {
-    //     PROVER_INPUT_JSON = Box::leak(json_owned.into_boxed_str());
-    // }
-    return_json(&prover_input);
+    return_json(call_id, &prover_input);
 }
 
 /// Produce a Cairo proof from a provided ProverInput JSON.
@@ -194,7 +241,7 @@ pub extern "C" fn execute(exe_ptr: u64, exe_len: u64, args_ptr: u64, args_len: u
 /// SAFETY: host must ensure (prover_input_ptr, prover_input_len) is valid UTF-8 JSON
 /// representing `ProverInput`.
 #[unsafe(no_mangle)]
-pub extern "C" fn prove(prover_input_ptr: u64, prover_input_len: u64) {
+pub extern "C" fn prove(call_id: u64, prover_input_ptr: u64, prover_input_len: u64) {
     panic_hook_set_once();
     let prover_input_json: &str = unsafe {
         let bytes =
@@ -202,62 +249,10 @@ pub extern "C" fn prove(prover_input_ptr: u64, prover_input_len: u64) {
         core::str::from_utf8(bytes).expect("prover_input json not valid UTF-8")
     };
 
-    // unsafe {
-    //     host_print(
-    //         prover_input_json.as_ptr() as u64,
-    //         prover_input_json.len() as u64,
-    //     );
-    // }
-    // let prover_input_json_ref: &str = include_str!("prover_input.json");
-
-    // compare the JSON strings
-    // assert_eq!(
-    //     prover_input_json, prover_input_json_ref,
-    //     "Prover input JSON does not match"
-    // );
-
-    // unsafe {
-    //     // host_print(
-    //     //     PROVER_INPUT_JSON.as_ptr() as u64,
-    //     //     PROVER_INPUT_JSON.len() as u64,
-    //     // );
-    //     let msg = "Prover input JSON: ";
-    //     host_print(msg.as_ptr() as u64, msg.len() as u64);
-    //     host_print(
-    //         prover_input_json.as_ptr() as u64,
-    //         prover_input_json.len() as u64,
-    //     );
-    //     // let prover_input: ProverInput =
-    //     //     serde_json::from_str(PROVER_INPUT_JSON).expect("deserialize prover_input");
-    //     let prover_input: ProverInput = serde_json::from_str(include_str!("prover_input.json"))
-    //         .expect("deserialize prover_input");
-    //     let proof = _prove(prover_input);
-    //     return_json(&proof);
-    // }
-
-    // unsafe {
-    //     host_print(
-    //         prover_input_json.as_ptr() as u64,
-    //         prover_input_json.len() as u64,
-    //     );
-    // }
-
-    // clone into String object
-    unsafe {
-        let msg = "Cloning str...";
-        host_print(msg.as_ptr() as u64, msg.len() as u64);
-    }
-    let prover_input_json_string = prover_input_json.to_string();
-    unsafe {
-        host_print(
-            prover_input_json_string.as_ptr() as u64,
-            prover_input_json_string.len() as u64,
-        );
-    }
     let prover_input: ProverInput =
-        serde_json::from_str(&prover_input_json_string).expect("deserialize prover_input");
+        serde_json::from_str(&prover_input_json).expect("deserialize prover_input");
     let proof = _prove(prover_input);
-    return_json(&proof);
+    return_json(call_id, &proof);
 }
 
 /// Verify a Cairo proof. Returns `{"ok": true}` if the proof is valid.
@@ -265,7 +260,7 @@ pub extern "C" fn prove(prover_input_ptr: u64, prover_input_len: u64) {
 /// SAFETY: host must ensure (proof_ptr, proof_len) is valid UTF-8 JSON representing
 /// `CairoProof<Blake2sMerkleHasher>`.
 #[unsafe(no_mangle)]
-pub extern "C" fn verify(proof_ptr: u64, proof_len: u64, with_pedersen: u64) {
+pub extern "C" fn verify(call_id: u64, proof_ptr: u64, proof_len: u64, with_pedersen: u64) {
     panic_hook_set_once();
     let proof_json: &str = unsafe {
         let bytes = core::slice::from_raw_parts(proof_ptr as *const u8, proof_len as usize);
@@ -280,12 +275,64 @@ pub extern "C" fn verify(proof_ptr: u64, proof_len: u64, with_pedersen: u64) {
         ok: bool,
     }
     let res = VerifyResult { ok };
-    return_json(&res);
+    return_json(call_id, &res);
+}
+
+/// Allocate `size` bytes and return the pointer (u64). Returns 0 on size==0.
+/// Memory is uninitialized.
+/// SAFETY: The caller must ensure the allocated memory is eventually freed.
+#[unsafe(no_mangle)]
+pub extern "C" fn malloc(size: u64) -> u64 {
+    panic_hook_set_once();
+    let usize_size: usize = match usize::try_from(size) {
+        Ok(v) => v,
+        Err(_) => panic!("size too large for this platform"),
+    };
+
+    let align: usize = 8;
+
+    if let Ok(layout) = Layout::from_size_align(usize_size, align) {
+        unsafe {
+            if layout.size() > 0 {
+                let ptr = alloc(layout);
+                if !ptr.is_null() {
+                    return ptr as usize as u64;
+                }
+            } else {
+                return align as u64;
+            }
+        }
+    }
+
+    panic!("allocation failed");
+}
+
+/// Deallocate a block previously allocated with `malloc`.
+/// SAFETY: The (ptr,size) pair must exactly match a previous successful `malloc` call.
+#[unsafe(no_mangle)]
+pub extern "C" fn free(ptr: u64, size: u64) {
+    panic_hook_set_once();
+    if ptr == 0 || size == 0 {
+        return;
+    }
+    let usize_ptr: usize = match usize::try_from(ptr) {
+        Ok(v) => v,
+        Err(_) => panic!("pointer too large for this platform"),
+    };
+    let usize_size: usize = match usize::try_from(size) {
+        Ok(v) => v,
+        Err(_) => panic!("size too large for this platform"),
+    };
+    unsafe {
+        let layout = Layout::from_size_align(usize_size, 8).expect("invalid layout");
+        dealloc(usize_ptr as *mut u8, layout);
+    }
 }
 
 /// Run tests
+// TODO add #[cfg(test)] to exclude from release build
 #[unsafe(no_mangle)]
-pub extern "C" fn test() {
+pub extern "C" fn test(call_id: u64) {
     panic_hook_set_once();
 
     test_e2e();
@@ -293,6 +340,6 @@ pub extern "C" fn test() {
 
     let msg = "Success!";
     unsafe {
-        return_string(msg.as_ptr() as u64, msg.len() as u64);
+        return_string(call_id, msg.as_ptr() as u64, msg.len() as u64);
     }
 }

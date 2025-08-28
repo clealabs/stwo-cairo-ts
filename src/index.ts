@@ -8,7 +8,7 @@ type CallResolver = {
 
 export type WasmWorkerHandle = {
   init: () => Promise<void>;
-  call: (fn: string, ...args: any[]) => Promise<any>;
+  call: (fn: string, resBuf: SharedArrayBuffer, ...args: any[]) => Promise<any>;
   terminate: () => void;
   onLog?: (s: string) => void;
   onError?: (s: string) => void;
@@ -25,7 +25,6 @@ export function createWasmWorkerHandle(options?: {
 
   const pendingCalls = new Map<number, CallResolver>();
   let callId = 1;
-  let lastResult: string | undefined; // TODO: would be nicer to map call IDs to results
 
   const onLog = options?.onLog ?? (() => {});
   const onError = options?.onError ?? (() => {});
@@ -40,17 +39,15 @@ export function createWasmWorkerHandle(options?: {
         onLog(String(data.message ?? ""));
         break;
       case "result":
-        lastResult = String(data.message ?? "");
-        break;
-      case "returned": {
         const id: number = data.id;
         const resolver = pendingCalls.get(id);
         if (resolver) {
-          resolver.resolve(lastResult);
+          resolver.resolve(data.message);
           pendingCalls.delete(id);
+        } else {
+          onError(`no resolver for call id ${id}`);
         }
         break;
-      }
       case "error": {
         const id: number | undefined = data.id;
         if (id != null && pendingCalls.has(id)) {
@@ -81,13 +78,17 @@ export function createWasmWorkerHandle(options?: {
     });
   }
 
-  function call(fn: string, ...args: any[]): Promise<any> {
+  function call(
+    fn: string,
+    resBuf: SharedArrayBuffer,
+    ...args: any[]
+  ): Promise<any> {
     return new Promise<any>((resolve, reject) => {
       const id = callId++;
       const resolver: CallResolver = { resolve, reject };
 
       pendingCalls.set(id, resolver);
-      worker.postMessage({ type: "call", id, fn, args });
+      worker.postMessage({ type: "call", id, fn, resBuf, args });
     });
   }
 
