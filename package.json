@@ -1,6 +1,7 @@
 {
   "name": "stwo-cairo",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "A Typescript library for stwo-cairo using WASM64",
   "type": "module",
   "main": "./dist/stwo-cairo.umd.cjs",
   "module": "./dist/stwo-cairo.js",
@@ -17,6 +18,17 @@
     "preview": "vite preview",
     "build:wasm": "cd backend && cargo build -Z build-std=std,panic_abort --target wasm64-unknown-unknown --release"
   },
+  "publishConfig": {
+    "provenance": true
+  },
+  "homepage": "https://github.com/clealabs/stwo-cairo-ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clealabs/stwo-cairo-ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
   "devDependencies": {
     "@types/node": "^24.3.0",
     "typescript": "~5.8.3",
