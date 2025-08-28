@@ -11,6 +11,15 @@ let free: (ptr: bigint, size: bigint) => void = () => {
   throw new Error("Memory deallocator not initialized");
 };
 
+const LogLevel = {
+  Error: 0,
+  Warn: 1,
+  Info: 2,
+  Debug: 3,
+  Trace: 4,
+} as const;
+type LogLevel = typeof LogLevel[keyof typeof LogLevel];
+
 function toNumber(x: number | bigint): number {
   if (typeof x === "number") return x;
   if (x > BigInt(Number.MAX_SAFE_INTEGER) || x < BigInt(0)) {
@@ -21,18 +30,20 @@ function toNumber(x: number | bigint): number {
   return Number(x);
 }
 
-function writeBytes(ptr: bigint, bytes: Uint8Array) {
+function checkMemoryBounds(ptr: bigint, len: bigint) {
   if (!sharedMemory) throw new Error("wasm memory not initialized");
-  const end = ptr + BigInt(bytes.length);
-  if (end > BigInt(sharedMemory.buffer.byteLength)) {
+  const p = toNumber(ptr);
+  const l = toNumber(len);
+  if (p < 0 || l < 0 || p + l > sharedMemory.buffer.byteLength) {
     throw new RangeError(
-      `writeBytes out of bounds: ptr=${ptr} len=${bytes.length} buffer=${sharedMemory.buffer.byteLength}`
+      `out of bounds: ptr=${ptr} len=${len} buffer=${sharedMemory.buffer.byteLength}`
     );
   }
-  // Now it's safe to convert to Number (we asserted end <= byteLength, which is < 2^53 in practice)
-  const offset = toNumber(ptr);
-  // create new view at the moment of writing (never reuse old view across grows)
-  new Uint8Array(sharedMemory.buffer, offset, bytes.length).set(bytes);
+}
+
+function writeBytes(ptr: bigint, bytes: Uint8Array) {
+  checkMemoryBounds(ptr, BigInt(bytes.length));
+  new Uint8Array(sharedMemory!.buffer, toNumber(ptr), bytes.length).set(bytes);
 }
 
 // Convert JS argument into one or more wasm64 u64 values (as BigInt) suitable for FFI.
@@ -80,42 +91,55 @@ function convertArg(arg: any): bigint[] {
 
 const imports: WebAssembly.Imports = {
   host: {
-    host_print: (ptr: any, len: any) => {
+    __log: (level: any, ptr: any, len: any) => {
       try {
-        if (!sharedMemory) throw new Error("wasm memory not initialized");
-        const p = toNumber(ptr);
-        const l = toNumber(len);
-        if (p < 0 || l < 0 || p + l > sharedMemory.buffer.byteLength) {
-          throw new RangeError(
-            `host_print out of bounds: ptr=${ptr} len=${len}`
-          );
-        }
-        const bytes = new Uint8Array(sharedMemory.buffer, p, l);
+        checkMemoryBounds(ptr, len);
+        const bytes = new Uint8Array(sharedMemory!.buffer, toNumber(ptr), toNumber(len));
         const s = new TextDecoder().decode(bytes);
-
-        postMessage({ type: "log", message: s });
+        switch (toNumber(level)) {
+          case LogLevel.Error:
+            console.error(s);
+            break;
+          case LogLevel.Warn:
+            console.warn(s);
+            break;
+          case LogLevel.Info:
+            console.info(s);
+            break;
+          case LogLevel.Debug:
+            console.debug(s);
+            break;
+          case LogLevel.Trace:
+            console.trace(s);
+            break;
+          default:
+            throw new Error(`unknown log level: ${level}`);
+        }
       } catch (err: any) {
         postMessage({ type: "error", message: String(err) });
       }
     },
 
-    return_string: (id: any, ptr: any, len: any) => {
+    __performance_mark: (ptr: any, len: any) => {
       try {
-        if (!sharedMemory) throw new Error("wasm memory not initialized");
-        const p = toNumber(ptr);
-        const l = toNumber(len);
-        if (p < 0 || l < 0 || p + l > sharedMemory.buffer.byteLength) {
-          throw new RangeError(
-            `host_print out of bounds: ptr=${ptr} len=${len}`
-          );
-        }
+        checkMemoryBounds(ptr, len);
+        const bytes = new Uint8Array(sharedMemory!.buffer, toNumber(ptr), toNumber(len));
+        const s = new TextDecoder().decode(bytes);
+        performance.mark(s);
+      } catch (err: any) {
+        postMessage({ type: "error", message: String(err) });
+      }
+    },
 
+    __return_string: (id: any, ptr: any, len: any) => {
+      try {
+        checkMemoryBounds(ptr, len);
         const resBuf = resBufs.get(toNumber(id));
         if (!resBuf) {
           throw new Error(`no result buffer for id ${id}`);
         }
 
-        const bytes = new Uint8Array(sharedMemory.buffer, p, l);
+        const bytes = new Uint8Array(sharedMemory!.buffer, toNumber(ptr), toNumber(len));
         if (bytes.length > resBuf.byteLength) {
           if (resBuf.growable && resBuf.maxByteLength >= bytes.length) {
             resBuf.grow(bytes.length);
@@ -135,7 +159,7 @@ const imports: WebAssembly.Imports = {
       }
     },
 
-    crypto_get_random: (ptr: any, len: any) => {
+    __crypto_get_random: (ptr: any, len: any) => {
       try {
         if (!sharedMemory) throw new Error("wasm memory not initialized");
         const p = toNumber(ptr);
