@@ -33,9 +33,15 @@ export default defineConfig({
       name: "stwo-cairo",
       fileName: "stwo-cairo",
     },
+    rollupOptions: {
+      output: {
+        dir: resolve(__dirname, "dist"), // ensure this is a string, plugin expects it
+      },
+    },
   },
   worker: {
-    plugins: () => [wasm(), topLevelAwait(), dts()],
+    plugins: () => [wasm(), topLevelAwait()],
+    format: "es",
   },
   // server: {
   //   headers: {

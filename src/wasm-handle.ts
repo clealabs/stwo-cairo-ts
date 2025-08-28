@@ -21,7 +21,8 @@ export function createWasmWorkerHandle(options?: {
 
   const worker = new Worker(
     new URL("./worker/wasm-worker.ts", import.meta.url),
-    { type: "module" }
+    // { type: "module" }
+    { type: "classic" } // for Firefox support. see https://github.com/Menci/vite-plugin-top-level-await?tab=readme-ov-file#workers
   );
 
   const pendingCalls = new Map<number, CallResolver>();
