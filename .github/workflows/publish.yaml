@@ -15,13 +15,16 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 9
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        working-directory: backend
       - uses: actions/setup-node@v4
         with:
           node-version: "22.x"
           registry-url: "https://registry.npmjs.org"
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build:wasm # TODO: this will error because we need to install rust on the runner
+      - run: pnpm build:wasm
       - run: pnpm build
       - run: npm publish --provenance --access public
         env:

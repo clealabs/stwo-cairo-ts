@@ -1168,7 +1168,6 @@ dependencies = [
  "cairo-vm",
  "getrandom 0.3.3",
  "serde",
- "serde_json",
  "sonic-rs",
  "stwo-cairo-adapter",
  "stwo_cairo_prover",
