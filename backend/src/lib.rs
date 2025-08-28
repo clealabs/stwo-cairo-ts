@@ -41,6 +41,18 @@ unsafe extern "C" {
 
 #[link(wasm_import_module = "host")]
 unsafe extern "C" {
+    pub(crate) fn __performance_measure(
+        name_ptr: u64,
+        name_len: u64,
+        start_ptr: u64,
+        start_len: u64,
+        end_ptr: u64,
+        end_len: u64,
+    );
+}
+
+#[link(wasm_import_module = "host")]
+unsafe extern "C" {
     pub(crate) fn __return_string(call_id: u64, ptr: u64, len: u64);
 }
 
@@ -58,6 +70,19 @@ fn log(level: LogLevel, msg: &str) {
 fn mark(name: &str) {
     unsafe {
         __performance_mark(name.as_ptr() as u64, name.len() as u64);
+    }
+}
+
+fn measure(name: &str, start_mark: &str, end_mark: &str) {
+    unsafe {
+        __performance_measure(
+            name.as_ptr() as u64,
+            name.len() as u64,
+            start_mark.as_ptr() as u64,
+            start_mark.len() as u64,
+            end_mark.as_ptr() as u64,
+            end_mark.len() as u64,
+        );
     }
 }
 
@@ -110,10 +135,16 @@ fn _execute(executable_json: &str, args: Vec<Arg>) -> ProverInput {
     mark("deserialize-executable-started");
     let executable = sonic_rs::from_str(executable_json).expect("Failed to read executable");
     mark("deserialize-executable-ended");
+    measure(
+        "deserialize-executable",
+        "deserialize-executable-started",
+        "deserialize-executable-ended",
+    );
     mark("execute-started");
     let runner = cairo_execute(executable, args);
     let prover_input = prover_input_from_runner(&runner);
     mark("execute-ended");
+    measure("execute", "execute-started", "execute-ended");
     prover_input
 }
 
@@ -121,6 +152,7 @@ fn _prove(prover_input: ProverInput) -> CairoProof<Blake2sMerkleHasher> {
     mark("prove-start");
     let proof = cairo_prove(prover_input, secure_pcs_config());
     mark("prove-end");
+    measure("prove", "prove-start", "prove-end");
     proof
 }
 
@@ -134,6 +166,7 @@ fn _verify(cairo_proof: CairoProof<Blake2sMerkleHasher>, with_pedersen: bool) ->
         verify_cairo::<Blake2sMerkleChannel>(cairo_proof, secure_pcs_config(), preprocessed_trace)
             .is_ok();
     mark("verify-end");
+    measure("verify", "verify-start", "verify-end");
     verdict
 }
 
@@ -141,46 +174,16 @@ fn _contains_pedersen(prover_input: &ProverInput) -> bool {
     prover_input.public_segment_context[1]
 }
 
-// TODO add #[cfg(test)] to exclude from release build
-fn test_e2e() {
-    let executable_json = include_str!("example_executable.json");
-    let args = vec![Arg::Value(Felt252::from(100))];
-
-    log(LogLevel::Trace, "Running execute...");
-
-    let prover_input = _execute(executable_json, args);
-    let prover_input_json = sonic_rs::to_string(&prover_input).expect("serialize prover_input");
-    let prover_input2: ProverInput =
-        sonic_rs::from_str(&prover_input_json).expect("deserialize prover_input");
-
-    let with_pedersen = _contains_pedersen(&prover_input2);
-
-    log(LogLevel::Trace, "Running prove...");
-
-    let cairo_proof = _prove(prover_input2);
-
-    log(LogLevel::Trace, "Running verify...");
-
-    let result = _verify(cairo_proof, with_pedersen);
-    assert!(result, "cairo proof verification failed");
-}
-
-// TODO add #[cfg(test)] to exclude from release build
-fn test_crypto_get_random() {
-    let buf = [0u8; 32];
-    unsafe {
-        __crypto_get_random(buf.as_ptr() as u64, buf.len() as u64);
-    }
-    assert!(!buf.iter().all(|&b| b == 0), "buf is all zeros");
-    let s = format!("{:?}", &buf);
-    log(LogLevel::Debug, &s);
-}
-
 /// Wrapper around `return_string` with JSON serialization.
 fn return_json<T: Serialize>(call_id: u64, value: &T) {
     mark("serialize-return-value-started");
     let json = sonic_rs::to_string(value).expect("serialize return value");
     mark("serialize-return-value-ended");
+    measure(
+        "serialize-return-value",
+        "serialize-return-value-started",
+        "serialize-return-value-ended",
+    );
     return_string(call_id, &json);
 }
 
@@ -205,13 +208,8 @@ pub extern "C" fn execute_and_prove(
         .map(|&x| Arg::Value(Felt252::from(x)))
         .collect();
 
-    log(LogLevel::Trace, "Running execute...");
     let prover_input = _execute(executable_json, args);
-
-    log(LogLevel::Trace, "Running prove...");
     let cairo_proof = _prove(prover_input);
-
-    log(LogLevel::Trace, "Returning string...");
     return_json(call_id, &cairo_proof);
 }
 
@@ -260,6 +258,11 @@ pub extern "C" fn prove(call_id: u64, prover_input_ptr: u64, prover_input_len: u
     let prover_input: ProverInput =
         sonic_rs::from_str(&prover_input_json).expect("deserialize prover_input");
     mark("deserialize-prover-input-ended");
+    measure(
+        "deserialize-prover-input",
+        "deserialize-prover-input-started",
+        "deserialize-prover-input-ended",
+    );
     let proof = _prove(prover_input);
     return_json(call_id, &proof);
 }
@@ -279,7 +282,13 @@ pub extern "C" fn verify(call_id: u64, proof_ptr: u64, proof_len: u64, with_pede
     let proof: CairoProof<Blake2sMerkleHasher> =
         sonic_rs::from_str(proof_json).expect("deserialize proof");
     mark("deserialize-proof-ended");
+    measure(
+        "deserialize-proof",
+        "deserialize-proof-started",
+        "deserialize-proof-ended",
+    );
 
+    log(LogLevel::Trace, "Running verify...");
     let ok = _verify(proof, with_pedersen != 0);
 
     #[derive(Serialize)]
@@ -341,8 +350,43 @@ pub extern "C" fn free(ptr: u64, size: u64) {
     }
 }
 
+#[cfg(test)]
+fn test_e2e() {
+    let executable_json = include_str!("example_executable.json");
+    let args = vec![Arg::Value(Felt252::from(100))];
+
+    log(LogLevel::Trace, "Running execute...");
+
+    let prover_input = _execute(executable_json, args);
+    let prover_input_json = sonic_rs::to_string(&prover_input).expect("serialize prover_input");
+    let prover_input2: ProverInput =
+        sonic_rs::from_str(&prover_input_json).expect("deserialize prover_input");
+
+    let with_pedersen = _contains_pedersen(&prover_input2);
+
+    log(LogLevel::Trace, "Running prove...");
+
+    let cairo_proof = _prove(prover_input2);
+
+    log(LogLevel::Trace, "Running verify...");
+
+    let result = _verify(cairo_proof, with_pedersen);
+    assert!(result, "cairo proof verification failed");
+}
+
+#[cfg(test)]
+fn test_crypto_get_random() {
+    let buf = [0u8; 32];
+    unsafe {
+        __crypto_get_random(buf.as_ptr() as u64, buf.len() as u64);
+    }
+    assert!(!buf.iter().all(|&b| b == 0), "buf is all zeros");
+    let s = format!("{:?}", &buf);
+    log(LogLevel::Debug, &s);
+}
+
 /// Run tests
-// TODO add #[cfg(test)] to exclude from release build
+#[cfg(test)]
 #[unsafe(no_mangle)]
 pub extern "C" fn test(call_id: u64) {
     panic_hook_set_once();

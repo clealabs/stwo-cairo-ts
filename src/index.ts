@@ -1,109 +1,92 @@
-export * from "./prove";
-export * from "./verify";
+import { createWasmWorkerHandle, type WasmWorkerHandle } from "./wasm-handle";
 
-type CallResolver = {
-  resolve: (v: any) => void;
-  reject: (e: any) => void;
-};
+let handle: WasmWorkerHandle | null = null;
 
-export type WasmWorkerHandle = {
-  init: () => Promise<void>;
-  call: (fn: string, resBuf: SharedArrayBuffer, ...args: any[]) => Promise<any>;
-  terminate: () => void;
-  onLog?: (s: string) => void;
-  onError?: (s: string) => void;
-};
+const SAB_MAX_LENGTH = 1073741824; // 1 GiB
 
-export function createWasmWorkerHandle(options?: {
-  onLog?: (s: string) => void;
-  onError?: (s: string) => void;
-}): WasmWorkerHandle {
-  const worker = new Worker(
-    new URL("./worker/wasm-worker.ts", import.meta.url),
-    { type: "module" }
-  );
-
-  const pendingCalls = new Map<number, CallResolver>();
-  let callId = 1;
-
-  const onLog = options?.onLog ?? (() => {});
-  const onError = options?.onError ?? (() => {});
-
-  worker.addEventListener("message", (ev: MessageEvent) => {
-    const data = ev.data;
-    if (!data) return;
-    switch (data.type) {
-      case "ready":
-        break;
-      case "log":
-        onLog(String(data.message ?? ""));
-        break;
-      case "result":
-        const id: number = data.id;
-        const resolver = pendingCalls.get(id);
-        if (resolver) {
-          resolver.resolve(data.message);
-          pendingCalls.delete(id);
-        } else {
-          onError(`no resolver for call id ${id}`);
-        }
-        break;
-      case "error": {
-        const id: number | undefined = data.id;
-        if (id != null && pendingCalls.has(id)) {
-          const resolver = pendingCalls.get(id)!;
-          resolver.reject(new Error(String(data.message ?? "unknown error")));
-          pendingCalls.delete(id);
-        } else {
-          onError(String(data.message ?? "unknown error"));
-        }
-        break;
-      }
-    }
+export function init() {
+  handle = createWasmWorkerHandle({
+    onLog: (s) => console.log(`[Wasm] ${s}`),
+    onError: (s) => console.error(`[Wasm] ${s}`),
   });
+  return handle.init();
+}
 
-  function init(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const onReady = (ev: MessageEvent) => {
-        if (ev.data?.type === "ready") {
-          worker.removeEventListener("message", onReady);
-          resolve();
-        } else if (ev.data?.type === "error") {
-          worker.removeEventListener("message", onReady);
-          reject(new Error(String(ev.data.message ?? "init error")));
-        }
-      };
-      worker.addEventListener("message", onReady);
-      worker.postMessage({ type: "init" });
-    });
-  }
+export function terminate() {
+  handle?.terminate();
+  handle = null;
+}
 
-  function call(
-    fn: string,
-    resBuf: SharedArrayBuffer,
-    ...args: any[]
-  ): Promise<any> {
-    return new Promise<any>((resolve, reject) => {
-      const id = callId++;
-      const resolver: CallResolver = { resolve, reject };
+async function callWrapper(
+  fn: string,
+  input: string,
+  ...args: any[]
+): Promise<string> {
+  if (!handle) await init();
+  const resBuf = new SharedArrayBuffer(0, { maxByteLength: SAB_MAX_LENGTH });
+  const resView = new Uint8Array(resBuf);
+  const inputBytes = new TextEncoder().encode(input);
+  const inputBuf = new SharedArrayBuffer(inputBytes.byteLength);
+  const inputView = new Uint8Array(inputBuf);
+  inputView.set(inputBytes);
+  await handle!.call(fn, resBuf, inputBuf, ...args);
+  const copied = resView.slice();
+  const out = new TextDecoder().decode(copied);
+  return out;
+}
 
-      pendingCalls.set(id, resolver);
-      worker.postMessage({ type: "call", id, fn, resBuf, args });
-    });
-  }
+export async function execute(
+  executable: string,
+  ...args: bigint[]
+): Promise<string> {
+  // if (!handle) await init();
+  // const resBuf = new SharedArrayBuffer(0, { maxByteLength: SAB_MAX_LENGTH });
+  // const resView = new Uint8Array(resBuf);
+  // const inputBytes = new TextEncoder().encode(executable);
+  // const inputBuf = new SharedArrayBuffer(inputBytes.byteLength);
+  // const inputView = new Uint8Array(inputBuf);
+  // inputView.set(inputBytes);
+  // await handle!.call("execute", resBuf, inputBuf, args);
+  // const copied = resView.slice();
+  // const proverInput = new TextDecoder().decode(copied);
+  // return proverInput;
+  return await callWrapper("execute", executable, args);
+}
 
-  function terminate() {
-    for (const [_id, resolver] of pendingCalls.entries())
-      resolver.reject(new Error("worker terminated"));
-    pendingCalls.clear();
-    worker.terminate();
-  }
+export function containsPedersenBuiltin(proverInput: string): boolean {
+  const proverInputJson = JSON.parse(proverInput);
+  return proverInputJson.public_segment_context.present[1];
+}
 
-  return {
-    init,
-    call,
-    terminate,
-    onLog,
-    onError,
-  };
+export async function prove(proverInput: string): Promise<string> {
+  // if (!handle) await init();
+  // const resBuf = new SharedArrayBuffer(0, { maxByteLength: SAB_MAX_LENGTH });
+  // const resView = new Uint8Array(resBuf);
+  // const inputBytes = new TextEncoder().encode(proverInput);
+  // const inputBuf = new SharedArrayBuffer(inputBytes.byteLength);
+  // const inputView = new Uint8Array(inputBuf);
+  // inputView.set(inputBytes);
+  // await handle!.call("prove", resBuf, inputBuf);
+  // const copied = resView.slice();
+  // const proof = new TextDecoder().decode(copied);
+  // return proof;
+  return await callWrapper("prove", proverInput);
+}
+
+export async function verify(
+  proof: string,
+  withPedersen: boolean = false
+): Promise<boolean> {
+  // if (!handle) await init();
+  // const resBuf = new SharedArrayBuffer(0, { maxByteLength: SAB_MAX_LENGTH });
+  // const resView = new Uint8Array(resBuf);
+  // const inputBytes = new TextEncoder().encode(proof);
+  // const inputBuf = new SharedArrayBuffer(inputBytes.byteLength);
+  // const inputView = new Uint8Array(inputBuf);
+  // inputView.set(inputBytes);
+  // await handle!.call("verify", resBuf, inputBuf, withPedersen);
+  // const copied = resView.slice();
+  // const verify_output = JSON.parse(new TextDecoder().decode(copied));
+  // return verify_output.ok;
+  return JSON.parse(await callWrapper("verify", proof, withPedersen)).ok;
 }

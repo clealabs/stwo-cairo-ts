@@ -18,7 +18,7 @@ const LogLevel = {
   Debug: 3,
   Trace: 4,
 } as const;
-type LogLevel = typeof LogLevel[keyof typeof LogLevel];
+type LogLevel = (typeof LogLevel)[keyof typeof LogLevel];
 
 function toNumber(x: number | bigint): number {
   if (typeof x === "number") return x;
@@ -42,6 +42,7 @@ function checkMemoryBounds(ptr: bigint, len: bigint) {
 }
 
 function writeBytes(ptr: bigint, bytes: Uint8Array) {
+  console.log("Writing bytes to WASM memory", bytes.length);
   checkMemoryBounds(ptr, BigInt(bytes.length));
   new Uint8Array(sharedMemory!.buffer, toNumber(ptr), bytes.length).set(bytes);
 }
@@ -55,6 +56,7 @@ function writeBytes(ptr: bigint, bytes: Uint8Array) {
 function convertArg(arg: any): bigint[] {
   if (typeof arg === "number") return [BigInt(arg)];
   if (typeof arg === "bigint") return [arg];
+  if (typeof arg === "boolean") return [arg ? BigInt(1) : BigInt(0)];
   if (typeof arg === "string") {
     const enc = new TextEncoder();
     const bytes = enc.encode(arg);
@@ -94,7 +96,11 @@ const imports: WebAssembly.Imports = {
     __log: (level: any, ptr: any, len: any) => {
       try {
         checkMemoryBounds(ptr, len);
-        const bytes = new Uint8Array(sharedMemory!.buffer, toNumber(ptr), toNumber(len));
+        const bytes = new Uint8Array(
+          sharedMemory!.buffer,
+          toNumber(ptr),
+          toNumber(len)
+        );
         const s = new TextDecoder().decode(bytes);
         switch (toNumber(level)) {
           case LogLevel.Error:
@@ -123,9 +129,51 @@ const imports: WebAssembly.Imports = {
     __performance_mark: (ptr: any, len: any) => {
       try {
         checkMemoryBounds(ptr, len);
-        const bytes = new Uint8Array(sharedMemory!.buffer, toNumber(ptr), toNumber(len));
+        const bytes = new Uint8Array(
+          sharedMemory!.buffer,
+          toNumber(ptr),
+          toNumber(len)
+        );
         const s = new TextDecoder().decode(bytes);
         performance.mark(s);
+      } catch (err: any) {
+        postMessage({ type: "error", message: String(err) });
+      }
+    },
+
+    __performance_measure: (
+      name_ptr: any,
+      name_len: any,
+      start_ptr: any,
+      start_len: any,
+      end_ptr: any,
+      end_len: any
+    ) => {
+      try {
+        checkMemoryBounds(name_ptr, name_len);
+        const name_bytes = new Uint8Array(
+          sharedMemory!.buffer,
+          toNumber(name_ptr),
+          toNumber(name_len)
+        );
+        const name = new TextDecoder().decode(name_bytes);
+
+        checkMemoryBounds(start_ptr, start_len);
+        const start_bytes = new Uint8Array(
+          sharedMemory!.buffer,
+          toNumber(start_ptr),
+          toNumber(start_len)
+        );
+        const start_mark = new TextDecoder().decode(start_bytes);
+
+        checkMemoryBounds(end_ptr, end_len);
+        const end_bytes = new Uint8Array(
+          sharedMemory!.buffer,
+          toNumber(end_ptr),
+          toNumber(end_len)
+        );
+        const end_mark = new TextDecoder().decode(end_bytes);
+        performance.measure(name, start_mark, end_mark);
       } catch (err: any) {
         postMessage({ type: "error", message: String(err) });
       }
@@ -139,7 +187,11 @@ const imports: WebAssembly.Imports = {
           throw new Error(`no result buffer for id ${id}`);
         }
 
-        const bytes = new Uint8Array(sharedMemory!.buffer, toNumber(ptr), toNumber(len));
+        const bytes = new Uint8Array(
+          sharedMemory!.buffer,
+          toNumber(ptr),
+          toNumber(len)
+        );
         if (bytes.length > resBuf.byteLength) {
           if (resBuf.growable && resBuf.maxByteLength >= bytes.length) {
             resBuf.grow(bytes.length);
