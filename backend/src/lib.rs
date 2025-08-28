@@ -78,7 +78,7 @@ fn secure_pcs_config() -> PcsConfig {
 }
 
 fn _execute(executable_json: &str, args: Vec<Arg>) -> ProverInput {
-    let executable = serde_json::from_str(executable_json).expect("Failed to read executable");
+    let executable = sonic_rs::from_str(executable_json).expect("Failed to read executable");
     let runner = cairo_execute(executable, args);
     prover_input_from_runner(&runner)
 }
@@ -111,9 +111,9 @@ fn test_e2e() {
     }
 
     let prover_input = _execute(executable_json, args);
-    let prover_input_json = serde_json::to_string(&prover_input).expect("serialize prover_input");
+    let prover_input_json = sonic_rs::to_string(&prover_input).expect("serialize prover_input");
     let prover_input2: ProverInput =
-        serde_json::from_str(&prover_input_json).expect("deserialize prover_input");
+        sonic_rs::from_str(&prover_input_json).expect("deserialize prover_input");
 
     let with_pedersen = _contains_pedersen(&prover_input2);
 
@@ -250,7 +250,7 @@ pub extern "C" fn prove(call_id: u64, prover_input_ptr: u64, prover_input_len: u
     };
 
     let prover_input: ProverInput =
-        serde_json::from_str(&prover_input_json).expect("deserialize prover_input");
+        sonic_rs::from_str(&prover_input_json).expect("deserialize prover_input");
     let proof = _prove(prover_input);
     return_json(call_id, &proof);
 }
@@ -267,7 +267,7 @@ pub extern "C" fn verify(call_id: u64, proof_ptr: u64, proof_len: u64, with_pede
         core::str::from_utf8(bytes).expect("proof json not valid UTF-8")
     };
     let proof: CairoProof<Blake2sMerkleHasher> =
-        serde_json::from_str(proof_json).expect("deserialize proof");
+        sonic_rs::from_str(proof_json).expect("deserialize proof");
     let ok = _verify(proof, with_pedersen != 0);
 
     #[derive(Serialize)]

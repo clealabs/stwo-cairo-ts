@@ -65,6 +65,11 @@ function convertArg(arg: any): bigint[] {
     writeBytes(ptr, bytes);
     return [ptr, BigInt(len)];
   }
+  if (arg instanceof SharedArrayBuffer) {
+    const ptr = malloc(BigInt(arg.byteLength)); // TODO: free this at some point
+    writeBytes(ptr, new Uint8Array(arg));
+    return [ptr, BigInt(arg.byteLength)];
+  }
   if (arg instanceof Uint8Array) {
     const ptr = malloc(BigInt(arg.length)); // TODO: free this at some point
     writeBytes(ptr, arg);

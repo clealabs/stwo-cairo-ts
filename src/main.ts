@@ -31,74 +31,86 @@ const handle = createWasmWorkerHandle({
     // append("test result: " + result);
 
     //// e2e js side
-    // console.log("e2e js start");
-    // console.time("e2e js");
-    // const resBuf1 = new SharedArrayBuffer(0, { maxByteLength: 1073741824 }); // 1 GiB
-    // const resView1 = new Uint8Array(resBuf1);
-    // console.time("execute");
-    // await handle.call("execute", resBuf1, exampleExecutable, [100n]);
-    // console.timeEnd("execute");
-    // console.time("copy buffer prover_input");
-    // const copied1 = resView1.slice();
-    // console.timeEnd("copy buffer prover_input");
-    // console.time("decode buffer prover_input");
-    // const prover_input = new TextDecoder().decode(copied1);
-    // console.timeEnd("decode buffer prover_input");
-    // console.log("prover_input:", prover_input);
-    // const resBuf2 = new SharedArrayBuffer(0, { maxByteLength: 1073741824 }); // 1 GiB
-    // const resView2 = new Uint8Array(resBuf2);
-    // console.time("prove");
-    // await handle.call("prove", resBuf2, prover_input);
-    // console.timeEnd("prove");
-    // console.time("copy buffer proof");
-    // const copied2 = resView2.slice();
-    // console.timeEnd("copy buffer proof");
-    // console.time("decode buffer proof");
-    // const proof = new TextDecoder().decode(copied2);
-    // console.timeEnd("decode buffer proof");
-    // console.log("proof:", proof);
-    // const resBuf3 = new SharedArrayBuffer(0, { maxByteLength: 1073741824 }); // 1 GiB
-    // const resView3 = new Uint8Array(resBuf3);
-    // console.time("verify");
-    // await handle.call("verify", resBuf3, proof);
-    // console.timeEnd("verify");
-    // console.time("copy buffer verify_output");
-    // const copied3 = resView3.slice();
-    // console.timeEnd("copy buffer verify_output");
-    // console.time("decode buffer verify_output");
-    // const verify_output = new TextDecoder().decode(copied3);
-    // console.timeEnd("decode buffer verify_output");
-    // console.log("verify_output:", verify_output);
-    // console.timeEnd("e2e js");
-
-    //// execute_and_prove + verify
-    const resBuf = new SharedArrayBuffer(0, { maxByteLength: 1073741824 }); // 1 GiB
-    const resView = new Uint8Array(resBuf);
-    console.time("execute_and_prove");
-    await handle.call("execute_and_prove", resBuf, exampleExecutable, [100n]);
-    append("execute_and_prove finished: " + resView.byteLength);
-    console.timeEnd("execute_and_prove");
-    console.time("copy buffer");
-    const copied = resView.slice(); // TODO: we could avoid copy by using atomics (https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics#using_atomics, https://webreflection.medium.com/about-sharedarraybuffer-atomics-87f97ddfc098, https://gist.github.com/pfrazee/a307ccd66568dac7f716391fbc9ca254)
-    console.timeEnd("copy buffer");
-    console.time("decode buffer");
-    const proof = new TextDecoder().decode(copied);
-    console.timeEnd("decode buffer");
-    console.log("result:", proof);
-    append("proof logged");
+    console.log("e2e js start");
+    console.time("e2e js");
+    const resBuf1 = new SharedArrayBuffer(0, { maxByteLength: 1073741824 }); // 1 GiB
+    const resView1 = new Uint8Array(resBuf1);
+    const inputBytes1 = new TextEncoder().encode(exampleExecutable);
+    const inputBuf1 = new SharedArrayBuffer(inputBytes1.byteLength);
+    const inputView1 = new Uint8Array(inputBuf1);
+    inputView1.set(inputBytes1);
+    console.time("execute");
+    await handle.call("execute", resBuf1, inputBuf1, [100n]);
+    console.timeEnd("execute");
+    console.time("copy buffer prover_input");
+    const copied1 = resView1.slice();
+    console.timeEnd("copy buffer prover_input");
+    console.time("decode buffer prover_input");
+    const prover_input = new TextDecoder().decode(copied1);
+    console.timeEnd("decode buffer prover_input");
+    console.log("prover_input:", prover_input);
     const resBuf2 = new SharedArrayBuffer(0, { maxByteLength: 1073741824 }); // 1 GiB
     const resView2 = new Uint8Array(resBuf2);
+    const inputBytes2 = new TextEncoder().encode(prover_input);
+    const inputBuf2 = new SharedArrayBuffer(inputBytes2.byteLength);
+    const inputView2 = new Uint8Array(inputBuf2);
+    inputView2.set(inputBytes2);
+    console.time("prove");
+    await handle.call("prove", resBuf2, inputBuf2);
+    console.timeEnd("prove");
+    console.time("copy buffer proof");
+    const copied2 = resView2.slice();
+    console.timeEnd("copy buffer proof");
+    console.time("decode buffer proof");
+    const proof = new TextDecoder().decode(copied2);
+    console.timeEnd("decode buffer proof");
+    console.log("proof:", proof);
+    const resBuf3 = new SharedArrayBuffer(0, { maxByteLength: 1073741824 }); // 1 GiB
+    const resView3 = new Uint8Array(resBuf3);
+    const inputBytes3 = new TextEncoder().encode(proof);
+    const inputBuf3 = new SharedArrayBuffer(inputBytes3.byteLength);
+    const inputView3 = new Uint8Array(inputBuf3);
+    inputView3.set(inputBytes3);
     console.time("verify");
-    await handle.call("verify", resBuf2, proof); // TODO: ERROR we cant just pass proof here, we also need a SharedArrayBuffer
+    await handle.call("verify", resBuf3, inputBuf3);
     console.timeEnd("verify");
     console.time("copy buffer verify_output");
-    const copied2 = resView2.slice();
+    const copied3 = resView3.slice();
     console.timeEnd("copy buffer verify_output");
     console.time("decode buffer verify_output");
-    const verify_output = new TextDecoder().decode(copied2);
+    const verify_output = new TextDecoder().decode(copied3);
     console.timeEnd("decode buffer verify_output");
     console.log("verify_output:", verify_output);
-    append("verify_output logged");
+    console.timeEnd("e2e js");
+
+    //// execute_and_prove + verify
+    // const resBuf = new SharedArrayBuffer(0, { maxByteLength: 1073741824 }); // 1 GiB
+    // const resView = new Uint8Array(resBuf);
+    // console.time("execute_and_prove");
+    // await handle.call("execute_and_prove", resBuf, exampleExecutable, [100n]);
+    // append("execute_and_prove finished: " + resView.byteLength);
+    // console.timeEnd("execute_and_prove");
+    // console.time("copy buffer");
+    // const copied = resView.slice(); // TODO: we could avoid copy by using atomics (https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Atomics#using_atomics, https://webreflection.medium.com/about-sharedarraybuffer-atomics-87f97ddfc098, https://gist.github.com/pfrazee/a307ccd66568dac7f716391fbc9ca254)
+    // console.timeEnd("copy buffer");
+    // console.time("decode buffer");
+    // const proof = new TextDecoder().decode(copied);
+    // console.timeEnd("decode buffer");
+    // console.log("result:", proof);
+    // append("proof logged");
+    // const resBuf2 = new SharedArrayBuffer(0, { maxByteLength: 1073741824 }); // 1 GiB
+    // const resView2 = new Uint8Array(resBuf2);
+    // console.time("verify");
+    // await handle.call("verify", resBuf2, proof); // TODO: ERROR we cant just pass proof here, we also need a SharedArrayBuffer
+    // console.timeEnd("verify");
+    // console.time("copy buffer verify_output");
+    // const copied2 = resView2.slice();
+    // console.timeEnd("copy buffer verify_output");
+    // console.time("decode buffer verify_output");
+    // const verify_output = new TextDecoder().decode(copied2);
+    // console.timeEnd("decode buffer verify_output");
+    // console.log("verify_output:", verify_output);
+    // append("verify_output logged");
 
     handle.terminate();
   } catch (e) {
