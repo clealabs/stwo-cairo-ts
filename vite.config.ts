@@ -9,19 +9,13 @@ export default defineConfig({
     wasm(),
     topLevelAwait(),
     dts(),
-    // https://medium.com/@pigeoncodeur/self-hosting-webassembly-app-in-js-13c3e7ff4748
     {
-      name: "dev-headers-every-response",
+      name: "dev-headers",
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          // required for SharedArrayBuffer / cross-origin isolation
           res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
           res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-          // ensure assets (worker modules, wasm) are allowed
           res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-
-          // optional: prevent caching while developing to avoid 304 issues
-          // res.setHeader("Cache-Control", "no-store");
           next();
         });
       },
@@ -41,13 +35,6 @@ export default defineConfig({
   },
   worker: {
     plugins: () => [wasm(), topLevelAwait()],
-    format: "es",
+    format: "es", // TODO: uncomment for Firefox support (right now causes build error)
   },
-  // server: {
-  //   headers: {
-  //     "Cross-Origin-Opener-Policy": "same-origin",
-  //     "Cross-Origin-Embedder-Policy": "require-corp",
-  //     "Cross-Origin-Resource-Policy": "same-origin",
-  //   },
-  // },
 });
