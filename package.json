@@ -1,6 +1,6 @@
 {
   "name": "stwo-cairo",
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "A Typescript library for stwo-cairo using WASM64",
   "type": "module",
   "main": "./dist/stwo-cairo.umd.cjs",

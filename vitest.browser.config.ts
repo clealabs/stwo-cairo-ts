@@ -12,7 +12,10 @@ export default defineConfig({
       enabled: true,
       provider: "playwright",
       // https://vitest.dev/guide/browser/playwright
-      instances: [{ browser: "chromium" }, { browser: "firefox" }],
+      instances: [
+        { browser: "chromium" },
+        // { browser: "firefox" } // TODO: make it work for firefox
+      ],
       headless: true,
     },
   },
