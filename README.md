@@ -23,13 +23,13 @@ Cross-Origin-Resource-Policy: cross-origin
 Executing and generating a proof of execution for a compiled Cairo program:
 
 ```ts
-import { execute, containsPedersen, prove } from "stwo-cairo";
+import { execute, containsPedersenBuiltin, prove } from "stwo-cairo";
 
 const executable: string = "..."; // Cairo executable JSON string
 const args: BigInt[] = [1n, 2n]; // arguments for the program
 
 const prover_input: string = await execute(executable, ...args); // the execution trace
-const with_pedersen: boolean = await containsPedersenBuiltin(prover_input); // for the verifier
+const with_pedersen: boolean = containsPedersenBuiltin(prover_input); // for the verifier
 const proof: string = await prove(prover_input); // the generated Cairo proof
 ```
 
@@ -48,11 +48,11 @@ const verdict: boolean = await verify(proof, with_pedersen); // whether the proo
 Make sure you have rust installed on your computer and run:
 
 ```
-npm run build:wasm
+pnpm run build:wasm
 ```
 
-### Run tests in the browser
+### Run tests
 
 ```
-npm run dev
+pnpm run test:browser
 ```

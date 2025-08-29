@@ -10,12 +10,11 @@ export default defineConfig({
     topLevelAwait(),
     dts(),
     {
-      name: "dev-headers",
+      name: "dev-headers", // we need this plugin because of a Vite bug: https://github.com/vitest-dev/vitest/issues/3743#issuecomment-1902261180
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
           res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
           res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
-          res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
           next();
         });
       },
@@ -26,11 +25,6 @@ export default defineConfig({
       entry: resolve(__dirname, "src/index.ts"),
       name: "stwo-cairo",
       fileName: "stwo-cairo",
-    },
-    rollupOptions: {
-      output: {
-        dir: resolve(__dirname, "dist"), // ensure this is a string, plugin expects it
-      },
     },
   },
   worker: {
