@@ -2,7 +2,7 @@ import initWasm from "../../backend/target/wasm64-unknown-unknown/release/cairo_
 
 let instance: any = null;
 let sharedMemory: WebAssembly.Memory | null = null;
-let allocatedMemory: Map<number, [bigint, bigint]> = new Map(); // callId -> [ptr, size]
+let allocatedMemory: Map<number, Array<[bigint, bigint]>> = new Map(); // callId -> [ [ptr,size], ... ]
 let resBufs: Map<number, SharedArrayBuffer> = new Map();
 
 let malloc: (size: bigint) => bigint = () => {
@@ -47,21 +47,43 @@ function writeBytes(ptr: bigint, bytes: Uint8Array) {
   new Uint8Array(sharedMemory!.buffer, toNumber(ptr), bytes.length).set(bytes);
 }
 
-// Convert JS argument into one or more wasm64 u64 values (as BigInt) suitable for FFI.
-// Supported:
-//  - number|bigint -> single scalar
-//  - string -> [ptr,len] (UTF-8)
-//  - Array<number|bigint> -> [ptr,len] of u64 values
-//  - Uint8Array -> [ptr,len] raw bytes
+/**
+ * Track memory allocations for a specific call.
+ * Used internally for freeing memory at the end of a function call.
+ * @param callId The ID of the call.
+ * @param ptr The pointer to the allocated memory.
+ * @param size The size of the allocated memory.
+ */
+function trackAlloc(callId: number, ptr: bigint, size: bigint) {
+  let list = allocatedMemory.get(callId);
+  if (!list) {
+    list = [];
+    allocatedMemory.set(callId, list);
+  }
+  list.push([ptr, size]);
+}
+
+/**
+ * Convert a JavaScript argument into a format suitable for WebAssembly.
+ * Supported types:
+ *  - number | bigint -> single scalar
+ *  - boolean -> 0 | 1
+ *  - string -> [ptr,len] (UTF-8)
+ *  - Array<number|bigint> -> [ptr,len] of u64 values
+ *  - Uint8Array -> [ptr,len] raw bytes
+ * @param callId The ID of the call.
+ * @param arg The argument to convert.
+ * @returns An array of BigInt values representing the argument.
+ */
 function convertArg(callId: number, arg: any): bigint[] {
   if (typeof arg === "number") return [BigInt(arg)];
   if (typeof arg === "bigint") return [arg];
-  if (typeof arg === "boolean") return [arg ? BigInt(1) : BigInt(0)];
+  if (typeof arg === "boolean") return [arg ? 1n : 0n];
   if (typeof arg === "string") {
     const enc = new TextEncoder();
     const bytes = enc.encode(arg);
     const ptr = malloc(BigInt(bytes.length));
-    allocatedMemory.set(callId, [ptr, BigInt(bytes.length)]);
+    trackAlloc(callId, ptr, BigInt(bytes.length));
     writeBytes(ptr, bytes);
     return [ptr, BigInt(bytes.length)];
   }
@@ -76,19 +98,19 @@ function convertArg(callId: number, arg: any): bigint[] {
       view.setBigUint64(i * 8, BigInt(v), true);
     }
     const ptr = malloc(BigInt(bytes.length));
-    allocatedMemory.set(callId, [ptr, BigInt(bytes.length)]);
+    trackAlloc(callId, ptr, BigInt(bytes.length));
     writeBytes(ptr, bytes);
     return [ptr, BigInt(len)];
   }
   if (arg instanceof SharedArrayBuffer) {
     const ptr = malloc(BigInt(arg.byteLength));
-    allocatedMemory.set(callId, [ptr, BigInt(arg.byteLength)]);
+    trackAlloc(callId, ptr, BigInt(arg.byteLength));
     writeBytes(ptr, new Uint8Array(arg));
     return [ptr, BigInt(arg.byteLength)];
   }
   if (arg instanceof Uint8Array) {
     const ptr = malloc(BigInt(arg.length));
-    allocatedMemory.set(callId, [ptr, BigInt(arg.length)]);
+    trackAlloc(callId, ptr, BigInt(arg.length));
     writeBytes(ptr, arg);
     return [ptr, BigInt(arg.length)];
   }
@@ -210,10 +232,15 @@ const imports: WebAssembly.Imports = {
         resView.set(bytes);
 
         // free allocated memory for this call
-        const obj = allocatedMemory.get(toNumber(id));
-        if (obj) {
-          const [ptr, size] = obj;
-          free(ptr, size);
+        const allocs = allocatedMemory.get(toNumber(id));
+        if (allocs) {
+          for (const [ptrAlloc, sizeAlloc] of allocs) {
+            try {
+              free(ptrAlloc, sizeAlloc);
+            } catch (e) {
+              console.warn("Failed to free wasm memory", e);
+            }
+          }
           allocatedMemory.delete(toNumber(id));
         }
 

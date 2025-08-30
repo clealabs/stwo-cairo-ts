@@ -4,6 +4,11 @@ let handle: WasmWorkerHandle | null = null;
 
 const SAB_MAX_LENGTH = 1073741824; // 1 GiB
 
+/**
+ * Initializes the WASM worker.
+ * This function is automatically called when a function requiring the worker is called,
+ * use it only if you want to manually initialize the worker earlier in your app logic.
+ */
 export function init() {
   handle = createWasmWorkerHandle({
     onLog: (s) => console.log(`[Wasm] ${s}`),
@@ -12,6 +17,9 @@ export function init() {
   return handle.init();
 }
 
+/**
+ * Terminates the WASM worker.
+ */
 export function terminate() {
   handle?.terminate();
   handle = null;
@@ -19,17 +27,17 @@ export function terminate() {
 
 async function callWrapper(
   fn: string,
-  input: string,
+  arg1: string,
   ...args: any[]
 ): Promise<string> {
   if (!handle) await init();
   const resBuf = new SharedArrayBuffer(0, { maxByteLength: SAB_MAX_LENGTH });
   const resView = new Uint8Array(resBuf);
-  const inputBytes = new TextEncoder().encode(input);
-  const inputBuf = new SharedArrayBuffer(inputBytes.byteLength);
-  const inputView = new Uint8Array(inputBuf);
-  inputView.set(inputBytes);
-  await handle!.call(fn, resBuf, inputBuf, ...args);
+  const arg1Bytes = new TextEncoder().encode(arg1);
+  const arg1Buf = new SharedArrayBuffer(arg1Bytes.byteLength);
+  const arg1View = new Uint8Array(arg1Buf);
+  arg1View.set(arg1Bytes);
+  await handle!.call(fn, resBuf, arg1Buf, ...args);
   const copied = resView.slice();
   const out = new TextDecoder().decode(copied);
   return out;

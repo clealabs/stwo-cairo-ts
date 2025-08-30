@@ -262,7 +262,6 @@ pub extern "C" fn verify(call_id: u64, proof_ptr: u64, proof_len: u64, with_pede
         "deserialize-proof-ended",
     );
 
-    log(LogLevel::Trace, "Running verify...");
     let ok = _verify(proof, with_pedersen != 0);
 
     #[derive(Serialize)]
@@ -329,7 +328,7 @@ fn test_e2e() {
     let executable_json = include_str!("example_executable.json");
     let args = vec![Arg::Value(Felt252::from(100))];
 
-    log(LogLevel::Trace, "Running execute...");
+    log(LogLevel::Info, "Running execute...");
 
     let prover_input = _execute(executable_json, args);
     let prover_input_json = sonic_rs::to_string(&prover_input).expect("serialize prover_input");
@@ -338,11 +337,11 @@ fn test_e2e() {
 
     let with_pedersen = _contains_pedersen(&prover_input2);
 
-    log(LogLevel::Trace, "Running prove...");
+    log(LogLevel::Info, "Running prove...");
 
     let cairo_proof = _prove(prover_input2);
 
-    log(LogLevel::Trace, "Running verify...");
+    log(LogLevel::Info, "Running verify...");
 
     let result = _verify(cairo_proof, with_pedersen);
     assert!(result, "cairo proof verification failed");
