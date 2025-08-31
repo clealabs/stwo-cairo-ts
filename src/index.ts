@@ -10,7 +10,7 @@ const SAB_MAX_LENGTH = 1073741824; // 1 GiB
  * This function is automatically called when a function requiring the worker is called,
  * use it only if for example you want to load the worker directly on page load.
  */
-export function init(): Promise<void> {
+export async function init(): Promise<void> {
   if (!initPromise) {
     handle = createWasmWorkerHandle({
       onLog: (s) => console.log(`[Wasm] ${s}`),
@@ -18,7 +18,7 @@ export function init(): Promise<void> {
     });
     initPromise = handle.init();
   }
-  return initPromise;
+  return await initPromise;
 }
 
 /**

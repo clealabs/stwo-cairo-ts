@@ -1,4 +1,11 @@
-import { execute, containsPedersenBuiltin, prove, verify } from "../src/index";
+import {
+  execute,
+  containsPedersenBuiltin,
+  prove,
+  verify,
+  init,
+  terminate,
+} from "../src/index";
 import { expect, test } from "vitest";
 
 const exampleExecutable: string =
@@ -7,6 +14,8 @@ const exampleExecutable: string =
 test(
   "e2e test js",
   async () => {
+    await init();
+
     const prover_input: string = await execute(exampleExecutable, 100n);
     expect(prover_input).toBeDefined();
 
@@ -18,6 +27,8 @@ test(
 
     const verified: boolean = await verify(proof, with_pedersen);
     expect(verified).toBe(true);
+
+    terminate();
   },
   10 * 60 * 1000 // 10 minutes timeout
 );
