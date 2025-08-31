@@ -1,20 +1,24 @@
 import { createWasmWorkerHandle, type WasmWorkerHandle } from "./wasm-handle";
 
 let handle: WasmWorkerHandle | null = null;
+let initPromise: Promise<void> | null = null;
 
 const SAB_MAX_LENGTH = 1073741824; // 1 GiB
 
 /**
  * Initializes the WASM worker.
  * This function is automatically called when a function requiring the worker is called,
- * use it only if you want to manually initialize the worker earlier in your app logic.
+ * use it only if for example you want to load the worker directly on page load.
  */
-export function init() {
-  handle = createWasmWorkerHandle({
-    onLog: (s) => console.log(`[Wasm] ${s}`),
-    onError: (s) => console.error(`[Wasm] ${s}`),
-  });
-  return handle.init();
+export function init(): Promise<void> {
+  if (!initPromise) {
+    handle = createWasmWorkerHandle({
+      onLog: (s) => console.log(`[Wasm] ${s}`),
+      onError: (s) => console.error(`[Wasm] ${s}`),
+    });
+    initPromise = handle.init();
+  }
+  return initPromise;
 }
 
 /**
