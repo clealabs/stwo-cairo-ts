@@ -1,6 +1,6 @@
 {
   "name": "stwo-cairo",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A Typescript library for stwo-cairo using WASM64",
   "type": "module",
   "main": "./dist/stwo-cairo.umd.cjs",
@@ -12,6 +12,9 @@
       "require": "./dist/stwo-cairo.umd.cjs"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
