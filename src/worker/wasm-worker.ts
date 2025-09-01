@@ -50,9 +50,6 @@ function writeBytes(ptr: bigint, bytes: Uint8Array) {
 /**
  * Track memory allocations for a specific call.
  * Used internally for freeing memory at the end of a function call.
- * @param callId The ID of the call.
- * @param ptr The pointer to the allocated memory.
- * @param size The size of the allocated memory.
  */
 function trackAlloc(callId: number, ptr: bigint, size: bigint) {
   let list = allocatedMemory.get(callId);
@@ -65,20 +62,11 @@ function trackAlloc(callId: number, ptr: bigint, size: bigint) {
 
 /**
  * Convert a JavaScript argument into a format suitable for WebAssembly.
- * Supported types:
- *  - number | bigint -> single scalar
- *  - boolean -> 0 | 1
- *  - string -> [ptr,len] (UTF-8)
- *  - Array<number|bigint> -> [ptr,len] of u64 values
- *  - Uint8Array -> [ptr,len] raw bytes
- * @param callId The ID of the call.
- * @param arg The argument to convert.
- * @returns An array of BigInt values representing the argument.
  */
 function convertArg(callId: number, arg: any): bigint[] {
   if (typeof arg === "number") return [BigInt(arg)];
   if (typeof arg === "bigint") return [arg];
-  if (typeof arg === "boolean") return [arg ? 1n : 0n];
+  if (typeof arg === "boolean") return [arg ? 1n : 0n]; // true -> 1n, false -> 0n
   if (typeof arg === "string") {
     const enc = new TextEncoder();
     const bytes = enc.encode(arg);
@@ -88,13 +76,11 @@ function convertArg(callId: number, arg: any): bigint[] {
     return [ptr, BigInt(bytes.length)];
   }
   if (Array.isArray(arg)) {
-    // treat as array of u64 scalars
     const len = arg.length;
     const bytes = new Uint8Array(len * 8);
     const view = new DataView(bytes.buffer);
     for (let i = 0; i < len; i++) {
       const v = typeof arg[i] === "bigint" ? arg[i] : BigInt(arg[i]);
-      // little-endian write of 64-bit value
       view.setBigUint64(i * 8, BigInt(v), true);
     }
     const ptr = malloc(BigInt(bytes.length));

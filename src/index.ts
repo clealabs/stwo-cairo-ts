@@ -27,6 +27,7 @@ export async function init(): Promise<void> {
 export function terminate() {
   handle?.terminate();
   handle = null;
+  initPromise = null;
 }
 
 async function callWrapper(
