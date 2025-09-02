@@ -150,6 +150,10 @@ fn _execute(executable_json: &str, args: Vec<Arg>) -> ProverInput {
 
 fn _prove(prover_input: ProverInput) -> CairoProof<Blake2sMerkleHasher> {
     mark("prove-start");
+    log(LogLevel::Info, "[DEBUG]");
+    let json = sonic_rs::to_string(&prover_input).expect("_prove: error serialize prover input");
+    log(LogLevel::Info, &json);
+    log(LogLevel::Info, "Running prove...");
     let proof = cairo_prove(prover_input, secure_pcs_config());
     mark("prove-end");
     measure("prove", "prove-start", "prove-end");
