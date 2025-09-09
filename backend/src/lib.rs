@@ -99,17 +99,12 @@ fn return_string(call_id: u64, result: &str) {
     }
 }
 
-/// https://docs.rs/getrandom/0.3.3/getrandom/#custom-backend
 #[unsafe(no_mangle)]
-unsafe extern "Rust" fn __getrandom_v03_custom(dest: *mut u8, len: usize) -> Result<(), Error> {
-    let buf = unsafe {
-        core::ptr::write_bytes(dest, 0, len);
-        core::slice::from_raw_parts_mut(dest, len)
-    };
-    unsafe {
-        __crypto_get_random(buf.as_ptr() as u64, buf.len() as u64);
-    }
-    Ok(())
+unsafe extern "Rust" fn __getrandom_v03_custom(
+    dest: *mut u8,
+    len: usize,
+) -> Result<(), Error> {
+    Err(Error::UNSUPPORTED)
 }
 
 /// https://github.com/rustwasm/console_error_panic_hook/blob/master/src/lib.rs
