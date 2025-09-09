@@ -1172,6 +1172,8 @@ dependencies = [
  "stwo-cairo-adapter",
  "stwo_cairo_prover",
  "thiserror-no-std",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

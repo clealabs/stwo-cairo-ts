@@ -18,6 +18,8 @@ stwo-cairo-adapter = { git = "https://github.com/clealabs/stwo-cairo", branch = 
 stwo_cairo_prover = { git = "https://github.com/clealabs/stwo-cairo", branch = "62c3c4a-fix-wasm" }
 cairo-vm = { git = "https://github.com/lambdaclass/cairo-vm", rev = "b1a91f929b5fa29a1a2e9e6990a68a1220c0c673", features = ["mod_builtin"], default-features = false}
 cairo-prove = { git = "https://github.com/clealabs/stwo-cairo", branch = "fix-wasm64-standalone"}
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
 
 [profile.release]
 opt-level = 3

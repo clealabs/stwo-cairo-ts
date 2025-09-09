@@ -17,6 +17,13 @@ use stwo_cairo_prover::stwo_prover::core::{
     vcs::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher},
 };
 
+use std::fmt;
+use tracing::field::{Field, Visit};
+use tracing::{Event, Level};
+use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
+use tracing_subscriber::prelude::*;
+
 #[repr(u64)]
 #[allow(dead_code)]
 enum LogLevel {
@@ -118,6 +125,71 @@ fn panic_hook_set_once() {
     SET_HOOK.call_once(|| {
         panic::set_hook(Box::new(hook));
     });
+}
+
+// Tracing subscriber to forward logs to host
+
+#[derive(Default)]
+struct MessageVisitor {
+    message: Option<String>,
+}
+
+impl MessageVisitor {
+    fn new() -> Self {
+        Self { message: None }
+    }
+}
+
+impl Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        if field.name() == "message" {
+            self.message = Some(format!("{:?}", value));
+        }
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "message" {
+            self.message = Some(value.to_string());
+        }
+    }
+}
+
+struct WasmLogLayer;
+
+impl<S: tracing::Subscriber> Layer<S> for WasmLogLayer {
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let mut visitor = MessageVisitor::new();
+        event.record(&mut visitor);
+
+        let msg = match visitor.message {
+            Some(m) => m,
+            None => {
+                struct AllFieldsVisitor(String);
+                use std::fmt::Write;
+                impl Visit for AllFieldsVisitor {
+                    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+                        let _ = write!(&mut self.0, "{}={:?} ", field.name(), value);
+                    }
+                    fn record_str(&mut self, field: &Field, value: &str) {
+                        let _ = write!(&mut self.0, "{}={} ", field.name(), value);
+                    }
+                }
+                let mut fallback = AllFieldsVisitor(String::new());
+                event.record(&mut fallback);
+                fallback.0
+            }
+        };
+
+        let level_code = match *event.metadata().level() {
+            Level::TRACE => LogLevel::Trace,
+            Level::DEBUG => LogLevel::Debug,
+            Level::INFO => LogLevel::Info,
+            Level::WARN => LogLevel::Warn,
+            Level::ERROR => LogLevel::Error,
+        };
+
+        log(level_code, &msg);
+    }
 }
 
 fn secure_pcs_config() -> PcsConfig {
@@ -226,6 +298,11 @@ pub extern "C" fn execute(call_id: u64, exe_ptr: u64, exe_len: u64, args_ptr: u6
 #[unsafe(no_mangle)]
 pub extern "C" fn prove(call_id: u64, prover_input_ptr: u64, prover_input_len: u64) {
     panic_hook_set_once();
+
+    // debug tracing
+    let subscriber = tracing_subscriber::registry().with(WasmLogLayer);
+    subscriber.init();
+
     let prover_input_json: &str = unsafe {
         let bytes =
             core::slice::from_raw_parts(prover_input_ptr as *const u8, prover_input_len as usize);
