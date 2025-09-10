@@ -16,7 +16,6 @@ test(
   "e2e test js",
   async () => {
     await init();
-    debug();
 
     const prover_input: string = await execute(exampleExecutable, 100n);
     expect(prover_input).toBeDefined();
