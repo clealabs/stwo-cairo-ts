@@ -21,6 +21,7 @@ const handle = createWasmWorkerHandle({
   try {
     console.log("main thread start");
     await handle.init();
+    handle.debug();
 
     append("wasm worker ready");
 

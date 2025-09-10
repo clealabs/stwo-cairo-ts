@@ -30,6 +30,13 @@ export function terminate() {
   initPromise = null;
 }
 
+/**
+ * Enables debug mode in the backend, which enables tracing from Rust to the browser console.
+ */
+export function debug() {
+  handle?.debug();
+}
+
 async function callWrapper(
   fn: string,
   arg1: string,
@@ -49,10 +56,10 @@ async function callWrapper(
 }
 
 /**
- * Executes a Cairo program and produces a proof of execution.
+ * Executes a Cairo program and returns the execution trace.
  * @param executable_json A JSON Cairo executable
  * @param args The arguments to pass to the executable
- * @returns A JSON-serialized CairoProof<Blake2sMerkleHasher>
+ * @returns A JSON-serialized ProverInput
  */
 export async function execute(
   executable: string,
@@ -73,7 +80,7 @@ export function containsPedersenBuiltin(proverInput: string): boolean {
 }
 
 /**
- * Executes a Cairo program and produces a proof of execution.
+ * Generates a proof from the execution trace.
  * @param proverInput The prover input JSON string
  * @returns A JSON-serialized CairoProof<Blake2sMerkleHasher>
  */

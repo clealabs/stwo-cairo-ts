@@ -1,6 +1,6 @@
 use getrandom::Error;
 use std::alloc::{Layout, alloc, dealloc};
-use std::panic;
+use std::{fmt, panic};
 
 use cairo_air::{CairoProof, PreProcessedTraceVariant, verifier::verify_cairo};
 use cairo_lang_runner::Arg;
@@ -16,6 +16,12 @@ use stwo_cairo_prover::stwo_prover::core::{
     pcs::PcsConfig,
     vcs::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher},
 };
+
+use tracing::field::{Field, Visit};
+use tracing::{Event, Level};
+use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
+use tracing_subscriber::prelude::*;
 
 #[repr(u64)]
 #[allow(dead_code)]
@@ -120,6 +126,71 @@ fn panic_hook_set_once() {
     });
 }
 
+// Tracing subscriber to forward logs to host
+
+#[derive(Default)]
+struct MessageVisitor {
+    message: Option<String>,
+}
+
+impl MessageVisitor {
+    fn new() -> Self {
+        Self { message: None }
+    }
+}
+
+impl Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        if field.name() == "message" {
+            self.message = Some(format!("{:?}", value));
+        }
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "message" {
+            self.message = Some(value.to_string());
+        }
+    }
+}
+
+struct WasmLogLayer;
+
+impl<S: tracing::Subscriber> Layer<S> for WasmLogLayer {
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let mut visitor = MessageVisitor::new();
+        event.record(&mut visitor);
+
+        let msg = match visitor.message {
+            Some(m) => m,
+            None => {
+                struct AllFieldsVisitor(String);
+                use std::fmt::Write;
+                impl Visit for AllFieldsVisitor {
+                    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+                        let _ = write!(&mut self.0, "{}={:?} ", field.name(), value);
+                    }
+                    fn record_str(&mut self, field: &Field, value: &str) {
+                        let _ = write!(&mut self.0, "{}={} ", field.name(), value);
+                    }
+                }
+                let mut fallback = AllFieldsVisitor(String::new());
+                event.record(&mut fallback);
+                fallback.0
+            }
+        };
+
+        let level_code = match *event.metadata().level() {
+            Level::TRACE => LogLevel::Trace,
+            Level::DEBUG => LogLevel::Debug,
+            Level::INFO => LogLevel::Info,
+            Level::WARN => LogLevel::Warn,
+            Level::ERROR => LogLevel::Error,
+        };
+
+        log(level_code, &msg);
+    }
+}
+
 fn secure_pcs_config() -> PcsConfig {
     PcsConfig {
         pow_bits: 26,
@@ -190,6 +261,14 @@ fn return_json<T: Serialize>(call_id: u64, value: &T) {
 // Wasm exports
 // CONVENTION: All exports must not return values directly, but use `return_string` instead.
 // Any returned value will be ignored by the host.
+
+/// Logs traces to host. Call once at startup.
+#[unsafe(no_mangle)]
+pub extern "C" fn debug_mode() {
+    let subscriber = tracing_subscriber::registry().with(WasmLogLayer);
+    subscriber.init();
+    log(LogLevel::Info, "Debug mode enabled");
+}
 
 /// Executes a compiled Cairo program.
 ///

@@ -7,6 +7,7 @@ export type WasmWorkerHandle = {
   init: () => Promise<void>;
   call: (fn: string, resBuf: SharedArrayBuffer, ...args: any[]) => Promise<any>;
   terminate: () => void;
+  debug: () => void;
   onLog?: (s: string) => void;
   onError?: (s: string) => void;
 };
@@ -104,6 +105,7 @@ export function createWasmWorkerHandle(options?: {
     init,
     call,
     terminate,
+    debug: () => call("debug_mode", new SharedArrayBuffer(0)),
     onLog,
     onError,
   };
