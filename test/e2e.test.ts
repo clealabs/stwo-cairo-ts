@@ -5,7 +5,6 @@ import {
   verify,
   init,
   terminate,
-  debug,
 } from "../src/index";
 import { expect, test } from "vitest";
 
